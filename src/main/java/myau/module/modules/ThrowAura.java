@@ -4,8 +4,10 @@ import myau.event.EventTarget;
 import myau.event.types.EventType;
 import myau.events.UpdateEvent;
 import myau.module.Module;
+import myau.property.properties.BooleanProperty;
 import myau.property.properties.FloatProperty;
 import myau.property.properties.IntProperty;
+import myau.util.CombatTargeting;
 import myau.util.ItemUtil;
 import myau.util.PacketUtil;
 import myau.util.RotationUtil;
@@ -20,6 +22,9 @@ public class ThrowAura extends Module {
     private static final Minecraft mc = Minecraft.getMinecraft();
     public final IntProperty cooldown = new IntProperty("cooldown", 500, 0, 2000);
     public final FloatProperty maxRange = new FloatProperty("max-range", 20.0F, 3.0F, 64.0F);
+    /** When true (default), ThrowAura only runs while KillAura is enabled and uses its target.
+     *  When false, ThrowAura finds its own target and works without KillAura. */
+    public final BooleanProperty requireKillAura = new BooleanProperty("require-killaura", true);
     private final TimerUtil timer = new TimerUtil();
 
     public ThrowAura() {
@@ -31,14 +36,38 @@ public class ThrowAura extends Module {
         if (!this.isEnabled() || mc.thePlayer == null) return;
         if (event.getType() != EventType.PRE) return;
 
-        KillAura killAura = (KillAura) myau.Myau.moduleManager.modules.get(KillAura.class);
-        if (killAura == null || !killAura.isEnabled()) return;
+        EntityLivingBase target;
+        double minThrowDistance;
 
-        EntityLivingBase target = killAura.getTarget();
-        if (target == null) return;
+        if (this.requireKillAura.getValue()) {
+            KillAura killAura = (KillAura) myau.Myau.moduleManager.modules.get(KillAura.class);
+            if (killAura == null || !killAura.isEnabled()) return;
+
+            target = killAura.getTarget();
+            if (target == null) return;
+
+            // Only throw when the target is outside KillAura melee range
+            minThrowDistance = killAura.attackRange.getValue();
+        } else {
+            // Independent mode: pick closest valid player within max-range
+            target = CombatTargeting.getTarget(
+                    true,
+                    false,
+                    false,
+                    true,
+                    true,
+                    true,
+                    this.maxRange.getValue(),
+                    CombatTargeting.SortMode.DISTANCE
+            );
+            if (target == null) return;
+
+            // No minimum distance required when working without KillAura
+            minThrowDistance = 0.0;
+        }
 
         double distance = mc.thePlayer.getDistanceToEntity(target);
-        if (distance > killAura.attackRange.getValue() && distance <= maxRange.getValue()) {
+        if (distance > minThrowDistance && distance <= maxRange.getValue()) {
             int projectileCount = ItemUtil.findInventorySlot(ItemUtil.ItemType.Projectile);
             if (projectileCount > 0 && timer.hasTimeElapsed(cooldown.getValue().longValue())) {
                 int projectileSlot = findProjectileHotbarSlot();
