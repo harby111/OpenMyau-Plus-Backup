@@ -15,9 +15,11 @@ import myau.util.TimerUtil;
 import net.minecraft.client.Minecraft;
 import net.minecraft.entity.EntityLivingBase;
 import net.minecraft.item.ItemStack;
+import net.minecraft.network.play.client.C03PacketPlayer;
 import net.minecraft.network.play.client.C08PacketPlayerBlockPlacement;
 import net.minecraft.network.play.client.C09PacketHeldItemChange;
 import net.minecraft.util.AxisAlignedBB;
+import net.minecraft.util.MathHelper;
 import net.minecraft.util.Vec3;
 
 public class ThrowAura extends Module {
@@ -94,9 +96,10 @@ public class ThrowAura extends Module {
         int slot = findProjectileHotbarSlot();
         if (slot == -1) return;
 
-        // Aim every time we start a throw
+        // Aim at target (server must receive look before C08)
         float[] rotations = getAimRotations(target, event.getYaw(), event.getPitch());
         event.setRotation(rotations[0], rotations[1], 1);
+        this.sendLookPacket(rotations[0], rotations[1]);
 
         int held = mc.thePlayer.inventory.currentItem;
 
@@ -137,6 +140,7 @@ public class ThrowAura extends Module {
             if (target != null) {
                 float[] rotations = getAimRotations(target, event.getYaw(), event.getPitch());
                 event.setRotation(rotations[0], rotations[1], 1);
+                this.sendLookPacket(rotations[0], rotations[1]);
             }
 
             if (this.stageTicks >= this.preThrowDelay.getValue()) {
@@ -163,6 +167,18 @@ public class ThrowAura extends Module {
                 timer.reset();
             }
         }
+    }
+
+    /**
+     * Tell the server the aim direction before the throw packet, otherwise the
+     * projectile uses the player's previous look (where the crosshair points).
+     */
+    private void sendLookPacket(float yaw, float pitch) {
+        pitch = MathHelper.clamp_float(pitch, -90.0F, 90.0F);
+        PacketUtil.sendPacket(new C03PacketPlayer.C05PacketPlayerLook(yaw, pitch, mc.thePlayer.onGround));
+        RotationUtil.serverYaw = yaw;
+        RotationUtil.serverPitch = pitch;
+        RotationUtil.customRots = true;
     }
 
     private void sendSwitchBack() {
