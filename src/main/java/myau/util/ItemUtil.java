@@ -57,6 +57,10 @@ public class ItemUtil {
         return false;
     }
 
+    public static boolean isEnderPearl(ItemStack itemStack) {
+        return itemStack != null && itemStack.getItem() instanceof ItemEnderPearl;
+    }
+
     public static boolean isContainerBlock(ItemBlock itemBlock) {
         Block block = itemBlock.getBlock();
         if (BlockUtil.isInteractable(block)) return false;
@@ -436,6 +440,11 @@ public class ItemUtil {
         Arrow {
             public boolean contains(ItemStack itemStack) {
                 return itemStack.getItem() == Items.arrow;
+            }
+        },
+        EnderPearl {
+            public boolean contains(ItemStack itemStack) {
+                return isEnderPearl(itemStack);
             }
         };
         abstract public boolean contains(ItemStack itemStack);
