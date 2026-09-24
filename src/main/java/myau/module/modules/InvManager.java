@@ -48,6 +48,8 @@ public class InvManager extends Module {
     public final IntProperty goldAppleSlot = new IntProperty("gold-apple-slot", 9, 0, 9);
     public final IntProperty arrow = new IntProperty("arrow", 256, 0, 2304);
     public final IntProperty bowSlot = new IntProperty("bow-slot", 8, 0, 9);
+    /** Preferred hotbar slot for Ender Pearls (1-9). 0 = disabled. */
+    public final IntProperty enderPearlSlot = new IntProperty("ender-pearl-slot", 6, 0, 9);
 
     private boolean isValidGameMode() {
         GameType gameType = mc.playerController.getCurrentGameType();
@@ -138,6 +140,8 @@ public class InvManager extends Module {
                         int inventoryBowSlot = ItemUtil.findBowInventorySlot(preferredBowHotbarSlot, this.checkDurability.getValue());
                         if (inventoryBowSlot == -1)
                             inventoryBowSlot = ItemUtil.findBowInventorySlot(preferredBowHotbarSlot, false);
+                        int preferredEnderPearlHotbarSlot = this.enderPearlSlot.getValue() - 1;
+                        int inventoryEnderPearlSlot = ItemUtil.findInventorySlot(preferredEnderPearlHotbarSlot, ItemUtil.ItemType.EnderPearl);
                         if (this.autoArmor.getValue() && this.autoArmorTime.hasTimeElapsed(this.autoArmorInterval.getValue() * 50L)) {
                             for (int i = 0; i < 4; i++) {
                                 int equippedSlot = equippedArmorSlots.get(i);
@@ -218,6 +222,13 @@ public class InvManager extends Module {
                                 return;
                             }
                         }
+                        if (preferredEnderPearlHotbarSlot >= 0 && preferredEnderPearlHotbarSlot <= 8 && !usedHotbarSlots.contains(preferredEnderPearlHotbarSlot) && inventoryEnderPearlSlot != -1) {
+                            usedHotbarSlots.add(preferredEnderPearlHotbarSlot);
+                            if (inventoryEnderPearlSlot != preferredEnderPearlHotbarSlot) {
+                                this.clickSlot(mc.thePlayer.inventoryContainer.windowId, this.convertSlotIndex(inventoryEnderPearlSlot), preferredEnderPearlHotbarSlot, 2);
+                                return;
+                            }
+                        }
                         if (this.dropTrash.getValue()) {
                             int currentBlockCount = this.getStackSize(inventoryBlocksSlot);
                             int currentProjectileCount = this.getStackSize(inventoryProjectileSlot);
@@ -231,7 +242,8 @@ public class InvManager extends Module {
                                         && inventoryBlocksSlot != i
                                         && inventoryProjectileSlot != i
                                         && inventoryGoldAppleSlot != i
-                                        && inventoryBowSlot != i) {
+                                        && inventoryBowSlot != i
+                                        && inventoryEnderPearlSlot != i) {
                                     ItemStack stack = mc.thePlayer.inventory.getStackInSlot(i);
                                     if (stack != null) {
                                         // Never drop items on the exact-name whitelist
