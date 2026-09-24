@@ -36,6 +36,8 @@ public class InvManager extends Module {
     public final BooleanProperty dropTrash = new BooleanProperty("drop-trash", false);
     /** Comma-separated full item names that must never be dropped (exact match). */
     public final ItemListProperty dropWhitelist = new ItemListProperty("drop-whitelist", "", this.dropTrash::getValue);
+    /** Comma-separated full item names that are always dropped (exact match). Whitelist wins if both match. */
+    public final ItemListProperty dropBlacklist = new ItemListProperty("drop-blacklist", "", this.dropTrash::getValue);
     public final BooleanProperty checkDurability = new BooleanProperty("check-durability", true);
     public final IntProperty swordSlot = new IntProperty("sword-slot", 1, 0, 9);
     public final IntProperty pickaxeSlot = new IntProperty("pickaxe-slot", 3, 0, 9);
@@ -249,6 +251,11 @@ public class InvManager extends Module {
                                         // Never drop items on the exact-name whitelist
                                         if (this.dropWhitelist.matchesExact(stack)) {
                                             continue;
+                                        }
+                                        // Always drop items on the exact-name blacklist
+                                        if (this.dropBlacklist.matchesExact(stack)) {
+                                            this.clickSlot(mc.thePlayer.inventoryContainer.windowId, this.convertSlotIndex(i), 1, 4);
+                                            return;
                                         }
                                         // Keep all arrows when a bow slot is configured
                                         if (this.bowSlot.getValue() > 0 && this.isArrow(stack)) {
