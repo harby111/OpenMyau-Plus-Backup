@@ -1,1 +1,5 @@
-/tmp/NameTags_final.java
+package myau.module.modules;
+
+// TEMPORARY STUB - RESTORE IN PROGRESS
+public class NameTags {
+}
