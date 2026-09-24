@@ -7,10 +7,12 @@ import myau.events.WindowClickEvent;
 import myau.module.Module;
 import myau.property.properties.BooleanProperty;
 import myau.property.properties.IntProperty;
+import myau.property.properties.ItemListProperty;
 import myau.util.ItemUtil;
 import myau.util.TimerUtil;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.inventory.GuiInventory;
+import net.minecraft.init.Items;
 import net.minecraft.inventory.ContainerPlayer;
 import net.minecraft.item.ItemStack;
 import net.minecraft.world.WorldSettings.GameType;
@@ -32,6 +34,8 @@ public class InvManager extends Module {
     public final BooleanProperty autoArmor = new BooleanProperty("auto-armor", true);
     public final IntProperty autoArmorInterval = new IntProperty("auto-armor-interval", 0, 0, 100, this.autoArmor::getValue);
     public final BooleanProperty dropTrash = new BooleanProperty("drop-trash", false);
+    /** Comma-separated full item names that must never be dropped (exact match). */
+    public final ItemListProperty dropWhitelist = new ItemListProperty("drop-whitelist", "", this.dropTrash::getValue);
     public final BooleanProperty checkDurability = new BooleanProperty("check-durability", true);
     public final IntProperty swordSlot = new IntProperty("sword-slot", 1, 0, 9);
     public final IntProperty pickaxeSlot = new IntProperty("pickaxe-slot", 3, 0, 9);
@@ -69,6 +73,10 @@ public class InvManager extends Module {
             ItemStack stack = mc.thePlayer.inventory.getStackInSlot(slot);
             return stack != null ? stack.stackSize : 0;
         }
+    }
+
+    private boolean isArrow(ItemStack stack) {
+        return stack != null && stack.getItem() == Items.arrow;
     }
 
     public InvManager() {
@@ -226,6 +234,14 @@ public class InvManager extends Module {
                                         && inventoryBowSlot != i) {
                                     ItemStack stack = mc.thePlayer.inventory.getStackInSlot(i);
                                     if (stack != null) {
+                                        // Never drop items on the exact-name whitelist
+                                        if (this.dropWhitelist.matchesExact(stack)) {
+                                            continue;
+                                        }
+                                        // Keep all arrows when a bow slot is configured
+                                        if (this.bowSlot.getValue() > 0 && this.isArrow(stack)) {
+                                            continue;
+                                        }
                                         boolean isBlock = ItemUtil.isBlock(stack);
                                         boolean isProjectile = ItemUtil.isProjectile(stack);
                                         if (isBlock) {
