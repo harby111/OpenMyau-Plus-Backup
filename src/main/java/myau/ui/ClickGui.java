@@ -146,6 +146,7 @@ public class ClickGui extends GuiScreen {
         miscModules.add(Myau.moduleManager.getModule(AntiBot.class));
         miscModules.add(Myau.moduleManager.getModule(BedTracker.class));
         miscModules.add(Myau.moduleManager.getModule(LightningTracker.class));
+        miscModules.add(Myau.moduleManager.getModule(PackLogger.class));
         miscModules.add(Myau.moduleManager.getModule(NoRotate.class));
         miscModules.add(Myau.moduleManager.getModule(NickHider.class));
         miscModules.add(Myau.moduleManager.getModule(AntiObbyTrap.class));
