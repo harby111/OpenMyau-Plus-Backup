@@ -33,6 +33,11 @@ public class AutoClicker extends Module {
     public final FloatProperty range = new FloatProperty("range", 3.0F, 3.0F, 8.0F, this.breakBlocks::getValue);
     public final FloatProperty hitBoxVertical = new FloatProperty("hit-box-vertical", 0.1F, 0.0F, 1.0F, this.breakBlocks::getValue);
     public final FloatProperty hitBoxHorizontal = new FloatProperty("hit-box-horizontal", 0.2F, 0.0F, 1.0F, this.breakBlocks::getValue);
+    /**
+     * When true (default): stop clicking while crosshair is on a friend.
+     * When false: keep auto-clicking even if aiming at a friend.
+     */
+    public final BooleanProperty friends = new BooleanProperty("friends", true);
 
     private long getNextClickDelay() {
         return 1000L / RandomUtil.nextLong(this.minCPS.getValue(), this.maxCPS.getValue());
@@ -45,7 +50,7 @@ public class AutoClicker extends Module {
     private boolean isBreakingBlock() {
         return mc.objectMouseOver != null && mc.objectMouseOver.typeOfHit == MovingObjectType.BLOCK;
     }
-	
+
     private boolean isLookingAtFriend() {
         if (mc.objectMouseOver == null || mc.objectMouseOver.typeOfHit != MovingObjectType.ENTITY) return false;
         if (!(mc.objectMouseOver.entityHit instanceof EntityPlayer)) return false;
@@ -53,11 +58,12 @@ public class AutoClicker extends Module {
     }
 
     private boolean canClick() {
-		
-        if (this.isLookingAtFriend()) {
+
+        // Only respect friends when the setting is enabled
+        if (this.friends.getValue() && this.isLookingAtFriend()) {
             return false;
         }
-		
+
         if (!this.weaponsOnly.getValue()
                 || ItemUtil.hasRawUnbreakingEnchant()
                 || this.allowTools.getValue() && ItemUtil.isHoldingTool()) {
