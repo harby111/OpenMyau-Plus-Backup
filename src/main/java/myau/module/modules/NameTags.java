@@ -66,6 +66,7 @@ public class NameTags extends Module {
     public final ModeProperty healthMode = new ModeProperty("health", 2, new String[]{"NONE", "HP", "HEARTS", "TAB"}, () -> this.mode.getValue() == 0);
     public final BooleanProperty armor = new BooleanProperty("armor", true, () -> this.mode.getValue() == 0);
     public final BooleanProperty showThreat = new BooleanProperty("Show-Threat", false, () -> this.mode.getValue() == 0);
+	public final BooleanProperty onlyArmor = new BooleanProperty("Only-Armor", false, () -> this.mode.getValue() == 0 && this.showThreat.getValue());
     public final BooleanProperty effects = new BooleanProperty("effects", true, () -> this.mode.getValue() == 0);
     public final BooleanProperty players = new BooleanProperty("players", true, () -> this.mode.getValue() == 0);
     public final BooleanProperty friends = new BooleanProperty("friends", true, () -> this.mode.getValue() == 0);
@@ -328,7 +329,7 @@ public class NameTags extends Module {
         }
         return " &e[Medium]&r";
     }
-
+	
     private float calculateCombatPower(EntityPlayer player) {
         if (player == null) {
             return 0.0F;
@@ -352,6 +353,9 @@ public class NameTags extends Module {
                     score += (float) EnchantmentHelper.getEnchantmentLevel(34, stack) * 0.25F;
                 }
             }
+        }
+        if (this.onlyArmor.getValue()) {
+            return score;
         }
         ItemStack held = player.getHeldItem();
         if (held != null && held.getItem() != null) {
