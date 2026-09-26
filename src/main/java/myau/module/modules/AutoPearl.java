@@ -14,8 +14,10 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.item.ItemStack;
 
 /**
- * One-shot ender pearl throw: find pearl in hotbar, switch, throw looking direction,
- * optionally switch back, then auto-disable. Timing mimics a normal player.
+ * While enabled: module keybind triggers a human-like ender pearl throw
+ * (hotbar search → switch → right-click look direction → optional switch back).
+ * While disabled: keybind does nothing (does not enable the module).
+ * Enable/disable via ClickGUI or command only.
  */
 public class AutoPearl extends Module {
     private static final Minecraft mc = Minecraft.getMinecraft();
@@ -26,8 +28,7 @@ public class AutoPearl extends Module {
         WAIT_THROW,
         THROW,
         WAIT_SWITCH_BACK,
-        SWITCH_BACK,
-        FINISH
+        SWITCH_BACK
     }
 
     /** Extra ticks after selecting the pearl before throwing (human reaction). */
@@ -46,26 +47,54 @@ public class AutoPearl extends Module {
     private int pearlSlot = -1;
 
     public AutoPearl() {
-        super("AutoPearl", false, false, "Throw an ender pearl from the hotbar once, then disable");
+        super("AutoPearl", false, false,
+                "While on: bind throws pearl from hotbar. While off: bind does nothing");
+    }
+
+    /**
+     * ModuleManager calls toggle() on the bound key.
+     * Enabled → start a throw (do not disable).
+     * Disabled → ignore key (do not enable).
+     */
+    @Override
+    public boolean toggle() {
+        if (!this.isEnabled()) {
+            return false;
+        }
+        this.requestThrow();
+        return false;
     }
 
     @Override
     public void onEnabled() {
         this.resetState();
+    }
+
+    @Override
+    public void onDisabled() {
+        if (mc.thePlayer != null) {
+            KeyBindUtil.setKeyBindState(mc.gameSettings.keyBindUseItem.getKeyCode(), false);
+            KeyBindUtil.updateKeyState(mc.gameSettings.keyBindUseItem.getKeyCode());
+        }
+        this.resetState();
+    }
+
+    /** Queue a throw if idle; ignore if already mid-sequence. */
+    private void requestThrow() {
+        if (this.stage != Stage.IDLE) {
+            return;
+        }
         if (mc.thePlayer == null || mc.theWorld == null) {
-            this.setEnabled(false);
             return;
         }
         if (mc.currentScreen != null) {
             ChatUtil.sendFormatted("&8[&eAutoPearl&8] &cClose any GUI first");
-            this.setEnabled(false);
             return;
         }
 
         int slot = this.findPearlHotbarSlot();
         if (slot == -1) {
             ChatUtil.sendFormatted("&8[&eAutoPearl&8] &cNo ender pearl in hotbar");
-            this.setEnabled(false);
             return;
         }
 
@@ -73,7 +102,6 @@ public class AutoPearl extends Module {
         this.originalSlot = mc.thePlayer.inventory.currentItem;
 
         if (slot == this.originalSlot) {
-            // Already holding pearl — wait a short human beat then throw
             this.stage = Stage.WAIT_THROW;
             this.stageTicks = 0;
             this.waitTarget = this.rollDelay(this.switchDelay.getValue());
@@ -84,37 +112,25 @@ public class AutoPearl extends Module {
         }
     }
 
-    @Override
-    public void onDisabled() {
-        // Release use key if somehow still held
-        if (mc.thePlayer != null) {
-            KeyBindUtil.setKeyBindState(mc.gameSettings.keyBindUseItem.getKeyCode(), false);
-            KeyBindUtil.updateKeyState(mc.gameSettings.keyBindUseItem.getKeyCode());
-        }
-        this.resetState();
-    }
-
     @EventTarget
     public void onTick(TickEvent event) {
         if (!this.isEnabled() || event.getType() != EventType.PRE) {
             return;
         }
+        if (this.stage == Stage.IDLE) {
+            return;
+        }
         if (mc.thePlayer == null || mc.theWorld == null) {
-            this.setEnabled(false);
+            this.resetState();
             return;
         }
         if (mc.currentScreen != null) {
             ChatUtil.sendFormatted("&8[&eAutoPearl&8] &cCancelled (GUI open)");
-            this.setEnabled(false);
+            this.resetState();
             return;
         }
 
         switch (this.stage) {
-            case IDLE:
-                // Should not stay enabled in IDLE
-                this.setEnabled(false);
-                break;
-
             case SWITCH_TO:
                 this.selectSlot(this.pearlSlot);
                 this.stage = Stage.WAIT_THROW;
@@ -124,7 +140,6 @@ public class AutoPearl extends Module {
 
             case WAIT_THROW:
                 this.stageTicks++;
-                // Keep selection stable while waiting
                 if (mc.thePlayer.inventory.currentItem != this.pearlSlot) {
                     this.selectSlot(this.pearlSlot);
                 }
@@ -136,12 +151,10 @@ public class AutoPearl extends Module {
 
             case THROW:
                 if (!ItemUtil.isEnderPearl(mc.thePlayer.getHeldItem())) {
-                    // Pearl gone or wrong item
                     ChatUtil.sendFormatted("&8[&eAutoPearl&8] &cPearl missing, abort");
-                    this.setEnabled(false);
+                    this.resetState();
                     break;
                 }
-                // Single right-click — same path a player uses (throws looking direction)
                 KeyBindUtil.pressKeyOnce(mc.gameSettings.keyBindUseItem.getKeyCode());
 
                 if (this.switchBack.getValue()
@@ -151,7 +164,7 @@ public class AutoPearl extends Module {
                     this.stageTicks = 0;
                     this.waitTarget = this.rollDelay(this.switchBackDelay.getValue());
                 } else {
-                    this.stage = Stage.FINISH;
+                    this.resetState();
                 }
                 break;
 
@@ -164,15 +177,11 @@ public class AutoPearl extends Module {
 
             case SWITCH_BACK:
                 this.selectSlot(this.originalSlot);
-                this.stage = Stage.FINISH;
-                break;
-
-            case FINISH:
-                this.setEnabled(false);
+                this.resetState();
                 break;
 
             default:
-                this.setEnabled(false);
+                this.resetState();
                 break;
         }
     }
@@ -184,7 +193,6 @@ public class AutoPearl extends Module {
         if (mc.thePlayer.inventory.currentItem == slot) {
             return;
         }
-        // Client-visible hotbar switch (sends C09 via vanilla update)
         mc.thePlayer.inventory.currentItem = slot;
         mc.playerController.updateController();
     }
@@ -206,8 +214,7 @@ public class AutoPearl extends Module {
         if (!this.humanize.getValue()) {
             return base;
         }
-        // ±1 tick when base >= 1
-        int delta = RandomUtil.nextInt(0, 2) - 1; // -1, 0, or 1
+        int delta = RandomUtil.nextInt(0, 2) - 1;
         return Math.max(0, base + delta);
     }
 
