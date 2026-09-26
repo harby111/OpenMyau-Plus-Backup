@@ -144,7 +144,8 @@ public class ModernClickGui extends GuiScreen {
                 Myau.moduleManager.getModule(FlagDetector.class),
                 Myau.moduleManager.getModule(AutoGapple.class),
                 Myau.moduleManager.getModule(AutoHeadHitter.class),
-                Myau.moduleManager.getModule(ThrowAura.class)
+                Myau.moduleManager.getModule(ThrowAura.class),
+                Myau.moduleManager.getModule(AutoPearl.class)
         );
 
         List<Module> miscModules = Arrays.asList(
