@@ -18,14 +18,16 @@ import net.minecraft.block.material.Material;
 import net.minecraft.client.Minecraft;
 import net.minecraft.item.ItemStack;
 import net.minecraft.network.play.client.C03PacketPlayer;
+import net.minecraft.network.play.client.C08PacketPlayerBlockPlacement;
 import net.minecraft.util.BlockPos;
+import net.minecraft.util.EnumFacing;
 import net.minecraft.util.MathHelper;
 import net.minecraft.util.Vec3;
 
 /**
  * ClickGUI / command: normal enable/disable.
  * In-game module keybind: while enabled → throw pearl; while disabled → do nothing.
- * Auto-Throw: aim at nearest safe solid landing instead of look direction.
+ * Auto-Throw: silent packet aim at floor tops or walls with a pad in front.
  */
 public class AutoPearl extends Module {
     private static final Minecraft mc = Minecraft.getMinecraft();
@@ -36,6 +38,10 @@ public class AutoPearl extends Module {
     private static final int SEARCH_UP = 8;
     private static final double PEARL_SPEED = 1.5;
     private static final double PEARL_GRAVITY = 0.03;
+
+    private static final EnumFacing[] HORIZONTAL = {
+            EnumFacing.NORTH, EnumFacing.SOUTH, EnumFacing.WEST, EnumFacing.EAST
+    };
 
     private enum Stage {
         IDLE,
@@ -57,17 +63,14 @@ public class AutoPearl extends Module {
     private int waitTarget;
     private int originalSlot = -1;
     private int pearlSlot = -1;
+    /** Silent aim point (packets only); null = throw with current look. */
     private Vec3 aimTarget = null;
 
     public AutoPearl() {
         super("AutoPearl", false, false,
-                "While on: bind throws pearl. Auto-Throw aims at safe ground");
+                "While on: bind throws pearl. Auto-Throw aims at safe ground/walls");
     }
 
-    /**
-     * ClickGUI / any open screen → normal toggle (enable/disable).
-     * In-game keybind → throw if enabled, ignore if disabled (never toggles).
-     */
     @Override
     public boolean toggle() {
         if (mc.currentScreen != null) {
@@ -113,16 +116,12 @@ public class AutoPearl extends Module {
 
         this.aimTarget = null;
         if (this.autoThrow.getValue()) {
-            BlockPos landing = this.findSafeLanding();
-            if (landing == null) {
+            Vec3 target = this.findBestAimTarget();
+            if (target == null) {
                 ChatUtil.sendFormatted("&8[&eAutoPearl&8] &cNo safe landing found");
                 return;
             }
-            this.aimTarget = new Vec3(
-                    landing.getX() + 0.5,
-                    landing.getY() + 1.05,
-                    landing.getZ() + 0.5
-            );
+            this.aimTarget = target;
         }
 
         this.pearlSlot = slot;
@@ -159,7 +158,7 @@ public class AutoPearl extends Module {
 
         if (this.aimTarget != null
                 && (this.stage == Stage.WAIT_THROW || this.stage == Stage.THROW)) {
-            this.applyAimLook();
+            this.applySilentAim();
         }
 
         switch (this.stage) {
@@ -188,9 +187,12 @@ public class AutoPearl extends Module {
                     break;
                 }
                 if (this.aimTarget != null) {
-                    this.applyAimLook();
+                    // Silent aim + placement packet so projectile uses server look, not client view
+                    this.applySilentAim();
+                    PacketUtil.sendPacket(new C08PacketPlayerBlockPlacement(mc.thePlayer.getHeldItem()));
+                } else {
+                    KeyBindUtil.pressKeyOnce(mc.gameSettings.keyBindUseItem.getKeyCode());
                 }
-                KeyBindUtil.pressKeyOnce(mc.gameSettings.keyBindUseItem.getKeyCode());
 
                 if (this.switchBack.getValue()
                         && this.originalSlot >= 0
@@ -221,7 +223,12 @@ public class AutoPearl extends Module {
         }
     }
 
-    private BlockPos findSafeLanding() {
+    /**
+     * Best aim point among:
+     * 1) Top of standable floors
+     * 2) Exposed wall faces that have a solid pad + air in front (pearl hits wall → land on pad)
+     */
+    private Vec3 findBestAimTarget() {
         if (mc.thePlayer == null || mc.theWorld == null) {
             return null;
         }
@@ -230,8 +237,11 @@ public class AutoPearl extends Module {
         int baseY = MathHelper.floor_double(mc.thePlayer.posY);
         int baseZ = MathHelper.floor_double(mc.thePlayer.posZ);
 
-        BlockPos best = null;
+        Vec3 best = null;
         double bestScore = Double.MAX_VALUE;
+
+        int yMin = Math.max(0, baseY - SEARCH_DOWN);
+        int yMax = Math.min(255, baseY + SEARCH_UP);
 
         for (int dx = -SEARCH_RANGE; dx <= SEARCH_RANGE; dx++) {
             for (int dz = -SEARCH_RANGE; dz <= SEARCH_RANGE; dz++) {
@@ -242,69 +252,145 @@ public class AutoPearl extends Module {
                 int x = baseX + dx;
                 int z = baseZ + dz;
 
-                int yMin = Math.max(0, baseY - SEARCH_DOWN);
-                int yMax = Math.min(255, baseY + SEARCH_UP);
-
                 for (int y = yMax; y >= yMin; y--) {
-                    BlockPos ground = new BlockPos(x, y, z);
-                    if (!this.isSafeLanding(ground)) {
+                    BlockPos pos = new BlockPos(x, y, z);
+                    if (!this.isSolidBlock(pos)) {
                         continue;
                     }
 
-                    double landX = x + 0.5;
-                    double landY = y + 1.0;
-                    double landZ = z + 0.5;
-                    double distSq = mc.thePlayer.getDistanceSq(landX, landY, landZ);
-                    if (distSq < MIN_LANDING_DIST * MIN_LANDING_DIST) {
-                        continue;
+                    // --- Floor top: stand on this block ---
+                    if (this.isStandableOn(pos)) {
+                        Vec3 aim = new Vec3(x + 0.5, y + 1.05, z + 0.5);
+                        double score = this.scoreAim(aim, dx, dz);
+                        if (score < bestScore) {
+                            bestScore = score;
+                            best = aim;
+                        }
                     }
 
-                    double horiz = Math.sqrt(dx * dx + dz * dz);
-                    double vert = Math.abs(landY - mc.thePlayer.posY);
-                    double score = horiz * 1.0 + vert * 0.65;
-                    if (landY > mc.thePlayer.posY + 2.0) {
-                        score += 3.0;
+                    // --- Wall face with pad in front ---
+                    for (EnumFacing face : HORIZONTAL) {
+                        Vec3 wallAim = this.wallAimIfSafe(pos, face);
+                        if (wallAim == null) {
+                            continue;
+                        }
+                        double score = this.scoreAim(wallAim, dx, dz);
+                        // slight preference for floors over walls when equal
+                        score += 0.35;
+                        if (score < bestScore) {
+                            bestScore = score;
+                            best = wallAim;
+                        }
                     }
-
-                    if (score < bestScore) {
-                        bestScore = score;
-                        best = ground;
-                    }
-                    break;
                 }
             }
         }
         return best;
     }
 
-    private boolean isSafeLanding(BlockPos ground) {
-        Block block = mc.theWorld.getBlockState(ground).getBlock();
-        if (block.getMaterial() == Material.air
-                || block.getMaterial().isLiquid()
-                || !BlockUtil.isSolid(block)) {
-            return false;
-        }
-        if (!block.isFullCube() && !block.isFullBlock()) {
-            if (!block.getMaterial().blocksMovement()) {
-                return false;
+    /**
+     * Wall at {@code wall} exposed on {@code face}.
+     * In front: air for body, solid pad under feet → aim at wall face center.
+     *
+     * <pre>
+     *   [Wall]
+     *   [Wall]  x  x   (air in front)
+     *   [Wall]  x  x
+     *           [Pad]  (solid landing)
+     * </pre>
+     */
+    private Vec3 wallAimIfSafe(BlockPos wall, EnumFacing face) {
+        BlockPos front = wall.offset(face);
+        BlockPos frontUp = front.up();
+        BlockPos pad = front.down();
+
+        // Space in front of this wall block must be free (body)
+        if (!this.isReplaceableAir(front) || !this.isReplaceableAir(frontUp)) {
+            // If aiming mid-wall, only need front of this cell free; feet may be lower
+            if (!this.isReplaceableAir(front)) {
+                return null;
             }
         }
 
-        BlockPos feet = ground.up();
-        BlockPos head = ground.up(2);
-        Block feetBlock = mc.theWorld.getBlockState(feet).getBlock();
-        Block headBlock = mc.theWorld.getBlockState(head).getBlock();
+        // Find a solid pad in front of the wall within a short vertical range
+        BlockPos foundPad = null;
+        for (int dy = 0; dy <= 3; dy++) {
+            BlockPos candidate = front.down(dy);
+            if (this.isSolidBlock(candidate) && this.isStandableOn(candidate)) {
+                foundPad = candidate;
+                break;
+            }
+        }
+        if (foundPad == null && this.isSolidBlock(pad) && this.isStandableOn(pad)) {
+            foundPad = pad;
+        }
+        if (foundPad == null) {
+            return null;
+        }
 
-        if (feetBlock.getMaterial().isSolid() || feetBlock.getMaterial().isLiquid()) {
+        // Prefer aiming at the wall face roughly at chest/head height above the pad
+        int aimY = MathHelper.clamp_int(foundPad.getY() + 1, wall.getY() - 1, wall.getY() + 1);
+        BlockPos aimBlock = new BlockPos(wall.getX(), aimY, wall.getZ());
+        if (!this.isSolidBlock(aimBlock)) {
+            aimBlock = wall;
+        }
+
+        // Center of the exposed face (pearl hits wall → player lands near pad)
+        double cx = aimBlock.getX() + 0.5 + face.getFrontOffsetX() * 0.51;
+        double cy = aimBlock.getY() + 0.55;
+        double cz = aimBlock.getZ() + 0.5 + face.getFrontOffsetZ() * 0.51;
+        return new Vec3(cx, cy, cz);
+    }
+
+    private double scoreAim(Vec3 aim, int dx, int dz) {
+        double distSq = mc.thePlayer.getDistanceSq(aim.xCoord, aim.yCoord, aim.zCoord);
+        if (distSq < MIN_LANDING_DIST * MIN_LANDING_DIST) {
+            return Double.MAX_VALUE;
+        }
+        double horiz = Math.sqrt(dx * dx + dz * dz);
+        double vert = Math.abs(aim.yCoord - mc.thePlayer.posY);
+        double score = horiz * 1.0 + vert * 0.65;
+        if (aim.yCoord > mc.thePlayer.posY + 2.0) {
+            score += 3.0;
+        }
+        return score;
+    }
+
+    private boolean isSolidBlock(BlockPos pos) {
+        Block block = mc.theWorld.getBlockState(pos).getBlock();
+        if (block.getMaterial() == Material.air || block.getMaterial().isLiquid()) {
             return false;
         }
-        if (headBlock.getMaterial().isSolid() || headBlock.getMaterial().isLiquid()) {
+        if (!BlockUtil.isSolid(block)) {
             return false;
+        }
+        if (!block.isFullCube() && !block.isFullBlock()) {
+            return block.getMaterial().blocksMovement();
         }
         return true;
     }
 
-    private void applyAimLook() {
+    /** Solid top with two air cells above (player can stand). */
+    private boolean isStandableOn(BlockPos ground) {
+        if (!this.isSolidBlock(ground)) {
+            return false;
+        }
+        return this.isReplaceableAir(ground.up()) && this.isReplaceableAir(ground.up(2));
+    }
+
+    private boolean isReplaceableAir(BlockPos pos) {
+        Block block = mc.theWorld.getBlockState(pos).getBlock();
+        if (block.getMaterial().isLiquid()) {
+            return false;
+        }
+        if (block.getMaterial() == Material.air) {
+            return true;
+        }
+        return !block.getMaterial().blocksMovement() && !block.getMaterial().isSolid();
+    }
+
+    /** Server look only — does not move client camera. */
+    private void applySilentAim() {
         if (this.aimTarget == null || mc.thePlayer == null) {
             return;
         }
@@ -320,21 +406,19 @@ public class AutoPearl extends Module {
         }
         dy += 0.5 * PEARL_GRAVITY * time * time;
 
-        float[] rots = RotationUtil.getRotationsTo(
-                dx, dy, dz,
-                mc.thePlayer.rotationYaw,
-                mc.thePlayer.rotationPitch
-        );
+        float baseYaw = RotationUtil.customRots ? RotationUtil.serverYaw : mc.thePlayer.rotationYaw;
+        float basePitch = RotationUtil.customRots ? RotationUtil.serverPitch : mc.thePlayer.rotationPitch;
+
+        float[] rots = RotationUtil.getRotationsTo(dx, dy, dz, baseYaw, basePitch);
         float yaw = rots[0];
         float pitch = MathHelper.clamp_float(rots[1], -90.0F, 90.0F);
 
-        mc.thePlayer.rotationYaw = yaw;
-        mc.thePlayer.rotationPitch = pitch;
         PacketUtil.sendPacket(new C03PacketPlayer.C05PacketPlayerLook(
                 yaw, pitch, mc.thePlayer.onGround));
         RotationUtil.serverYaw = yaw;
         RotationUtil.serverPitch = pitch;
         RotationUtil.customRots = true;
+        // client rotationYaw / rotationPitch intentionally unchanged
     }
 
     private void selectSlot(int slot) {
