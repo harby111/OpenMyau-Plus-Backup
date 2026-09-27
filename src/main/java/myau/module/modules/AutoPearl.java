@@ -1,11 +1,14 @@
 package myau.module.modules;
 
+import myau.Myau;
 import myau.event.EventTarget;
 import myau.event.types.EventType;
 import myau.events.TickEvent;
 import myau.module.Module;
 import myau.property.properties.BooleanProperty;
+import myau.property.properties.FloatProperty;
 import myau.property.properties.IntProperty;
+import myau.property.properties.ModeProperty;
 import myau.util.BlockUtil;
 import myau.util.ChatUtil;
 import myau.util.ItemUtil;
@@ -25,9 +28,8 @@ import net.minecraft.util.MathHelper;
 import net.minecraft.util.Vec3;
 
 /**
- * ClickGUI / command: normal enable/disable.
- * In-game module keybind: while enabled → throw pearl; while disabled → do nothing.
- * Auto-Throw: silent packet aim at floor tops or walls with a pad in front.
+ * AutoPearl: bind throws pearl while enabled.
+ * Auto-Throw: Packet (silent) or Legit (AimAssist-style camera + use key).
  */
 public class AutoPearl extends Module {
     private static final Minecraft mc = Minecraft.getMinecraft();
@@ -39,6 +41,11 @@ public class AutoPearl extends Module {
     private static final double PEARL_SPEED = 1.5;
     private static final double PEARL_GRAVITY = 0.03;
 
+    /** Degrees: Legit throws once aim is this close to target. */
+    private static final float LEGIT_AIM_TOLERANCE = 3.5F;
+    /** Max ticks spent aiming in Legit before force-throw. */
+    private static final int LEGIT_AIM_TIMEOUT = 25;
+
     private static final EnumFacing[] HORIZONTAL = {
             EnumFacing.NORTH, EnumFacing.SOUTH, EnumFacing.WEST, EnumFacing.EAST
     };
@@ -47,6 +54,8 @@ public class AutoPearl extends Module {
         IDLE,
         SWITCH_TO,
         WAIT_THROW,
+        /** Legit only: smooth camera until on-target (or timeout). */
+        AIM_LEGIT,
         THROW,
         WAIT_SWITCH_BACK,
         SWITCH_BACK
@@ -58,17 +67,40 @@ public class AutoPearl extends Module {
     public final BooleanProperty humanize = new BooleanProperty("humanize", true);
     public final BooleanProperty autoThrow = new BooleanProperty("Auto-Throw", false);
 
+    /**
+     * Visible only when Auto-Throw is on.
+     * Packet = packets only | Legit = real camera + use key.
+     */
+    public final ModeProperty throwMode = new ModeProperty(
+            "throw-mode", 0, new String[]{"Packet", "Legit"},
+            this.autoThrow::getValue
+    );
+
+    /** AimAssist-style speeds for Legit mode (only when Auto-Throw + Legit). */
+    public final FloatProperty legitHSpeed = new FloatProperty(
+            "legit-h-speed", 4.0F, 0.5F, 10.0F,
+            () -> this.autoThrow.getValue() && "Legit".equals(this.throwMode.getModeString())
+    );
+    public final FloatProperty legitVSpeed = new FloatProperty(
+            "legit-v-speed", 3.5F, 0.5F, 10.0F,
+            () -> this.autoThrow.getValue() && "Legit".equals(this.throwMode.getModeString())
+    );
+    public final FloatProperty legitSmoothing = new FloatProperty(
+            "legit-smoothing", 40.0F, 0.0F, 100.0F,
+            () -> this.autoThrow.getValue() && "Legit".equals(this.throwMode.getModeString())
+    );
+
     private Stage stage = Stage.IDLE;
     private int stageTicks;
     private int waitTarget;
     private int originalSlot = -1;
     private int pearlSlot = -1;
-    /** Silent aim point (packets only); null = throw with current look. */
+    /** Aim point; null = throw with current look (Auto-Throw off). */
     private Vec3 aimTarget = null;
 
     public AutoPearl() {
         super("AutoPearl", false, false,
-                "While on: bind throws pearl. Auto-Throw aims at safe ground/walls");
+                "Bind throws pearl. Auto-Throw: Packet silent or Legit camera aim");
     }
 
     @Override
@@ -94,6 +126,11 @@ public class AutoPearl extends Module {
             KeyBindUtil.updateKeyState(mc.gameSettings.keyBindUseItem.getKeyCode());
         }
         this.resetState();
+    }
+
+    private boolean isLegitMode() {
+        return this.autoThrow.getValue()
+                && "Legit".equals(this.throwMode.getModeString());
     }
 
     private void requestThrow() {
@@ -156,7 +193,9 @@ public class AutoPearl extends Module {
             return;
         }
 
+        // Packet mode: keep silent aim while waiting / throwing
         if (this.aimTarget != null
+                && !this.isLegitMode()
                 && (this.stage == Stage.WAIT_THROW || this.stage == Stage.THROW)) {
             this.applySilentAim();
         }
@@ -175,6 +214,28 @@ public class AutoPearl extends Module {
                     this.selectSlot(this.pearlSlot);
                 }
                 if (this.stageTicks >= this.waitTarget) {
+                    if (this.aimTarget != null && this.isLegitMode()) {
+                        this.stage = Stage.AIM_LEGIT;
+                        this.stageTicks = 0;
+                    } else {
+                        this.stage = Stage.THROW;
+                        this.stageTicks = 0;
+                    }
+                }
+                break;
+
+            case AIM_LEGIT:
+                this.stageTicks++;
+                if (mc.thePlayer.inventory.currentItem != this.pearlSlot) {
+                    this.selectSlot(this.pearlSlot);
+                }
+                if (this.aimTarget == null) {
+                    this.stage = Stage.THROW;
+                    this.stageTicks = 0;
+                    break;
+                }
+                boolean onTarget = this.applyLegitAimStep();
+                if (onTarget || this.stageTicks >= LEGIT_AIM_TIMEOUT) {
                     this.stage = Stage.THROW;
                     this.stageTicks = 0;
                 }
@@ -187,9 +248,13 @@ public class AutoPearl extends Module {
                     break;
                 }
                 if (this.aimTarget != null) {
-                    // Silent aim + placement packet so projectile uses server look, not client view
-                    this.applySilentAim();
-                    PacketUtil.sendPacket(new C08PacketPlayerBlockPlacement(mc.thePlayer.getHeldItem()));
+                    if (this.isLegitMode()) {
+                        this.applyLegitAimStep();
+                        KeyBindUtil.pressKeyOnce(mc.gameSettings.keyBindUseItem.getKeyCode());
+                    } else {
+                        this.applySilentAim();
+                        PacketUtil.sendPacket(new C08PacketPlayerBlockPlacement(mc.thePlayer.getHeldItem()));
+                    }
                 } else {
                     KeyBindUtil.pressKeyOnce(mc.gameSettings.keyBindUseItem.getKeyCode());
                 }
@@ -224,10 +289,57 @@ public class AutoPearl extends Module {
     }
 
     /**
-     * Best aim point among:
-     * 1) Top of standable floors
-     * 2) Exposed wall faces that have a solid pad + air in front (pearl hits wall → land on pad)
+     * One tick of AimAssist-style client rotation toward aimTarget.
+     * Uses RotationManager.setRotation (moves real camera).
+     *
+     * @return true if within LEGIT_AIM_TOLERANCE of ideal angles
      */
+    private boolean applyLegitAimStep() {
+        if (this.aimTarget == null || mc.thePlayer == null) {
+            return true;
+        }
+
+        float[] ideal = this.computeAimAngles(this.aimTarget, true);
+        float targetYaw = ideal[0];
+        float targetPitch = ideal[1];
+
+        float curYaw = mc.thePlayer.rotationYaw;
+        float curPitch = mc.thePlayer.rotationPitch;
+
+        float yawSpeed = Math.min(Math.abs(this.legitHSpeed.getValue()), 10.0F);
+        float pitchSpeed = Math.min(Math.abs(this.legitVSpeed.getValue()), 10.0F);
+
+        // smoothing 0–100 → scale step (higher = softer)
+        float soft = 1.0F - (this.legitSmoothing.getValue() / 200.0F);
+        float nextYaw = curYaw + MathHelper.wrapAngleTo180_float(targetYaw - curYaw) * 0.1F * yawSpeed * soft;
+        float nextPitch = curPitch + (targetPitch - curPitch) * 0.1F * pitchSpeed * soft;
+        nextPitch = MathHelper.clamp_float(nextPitch, -90.0F, 90.0F);
+
+        Myau.rotationManager.setRotation(nextYaw, nextPitch, 0, false);
+
+        float yawErr = Math.abs(MathHelper.wrapAngleTo180_float(targetYaw - mc.thePlayer.rotationYaw));
+        float pitchErr = Math.abs(targetPitch - mc.thePlayer.rotationPitch);
+        return yawErr <= LEGIT_AIM_TOLERANCE && pitchErr <= LEGIT_AIM_TOLERANCE;
+    }
+
+    private float[] computeAimAngles(Vec3 target, boolean gravityCompensate) {
+        Vec3 eye = mc.thePlayer.getPositionEyes(1.0F);
+        double dx = target.xCoord - eye.xCoord;
+        double dy = target.yCoord - eye.yCoord;
+        double dz = target.zCoord - eye.zCoord;
+
+        if (gravityCompensate) {
+            double horiz = Math.sqrt(dx * dx + dz * dz);
+            double time = Math.min(horiz / PEARL_SPEED, 40.0);
+            dy += 0.5 * PEARL_GRAVITY * time * time;
+        }
+
+        float baseYaw = mc.thePlayer.rotationYaw;
+        float basePitch = mc.thePlayer.rotationPitch;
+        float[] rots = RotationUtil.getRotationsTo(dx, dy, dz, baseYaw, basePitch);
+        return new float[]{rots[0], MathHelper.clamp_float(rots[1], -90.0F, 90.0F)};
+    }
+
     private Vec3 findBestAimTarget() {
         if (mc.thePlayer == null || mc.theWorld == null) {
             return null;
@@ -258,7 +370,6 @@ public class AutoPearl extends Module {
                         continue;
                     }
 
-                    // --- Floor top: stand on this block ---
                     if (this.isStandableOn(pos)) {
                         Vec3 aim = new Vec3(x + 0.5, y + 1.05, z + 0.5);
                         double score = this.scoreAim(aim, dx, dz);
@@ -268,15 +379,12 @@ public class AutoPearl extends Module {
                         }
                     }
 
-                    // --- Wall face with pad in front ---
                     for (EnumFacing face : HORIZONTAL) {
                         Vec3 wallAim = this.wallAimIfSafe(pos, face);
                         if (wallAim == null) {
                             continue;
                         }
-                        double score = this.scoreAim(wallAim, dx, dz);
-                        // slight preference for floors over walls when equal
-                        score += 0.35;
+                        double score = this.scoreAim(wallAim, dx, dz) + 0.35;
                         if (score < bestScore) {
                             bestScore = score;
                             best = wallAim;
@@ -288,31 +396,17 @@ public class AutoPearl extends Module {
         return best;
     }
 
-    /**
-     * Wall at {@code wall} exposed on {@code face}.
-     * In front: air for body, solid pad under feet → aim at wall face center.
-     *
-     * <pre>
-     *   [Wall]
-     *   [Wall]  x  x   (air in front)
-     *   [Wall]  x  x
-     *           [Pad]  (solid landing)
-     * </pre>
-     */
     private Vec3 wallAimIfSafe(BlockPos wall, EnumFacing face) {
         BlockPos front = wall.offset(face);
         BlockPos frontUp = front.up();
         BlockPos pad = front.down();
 
-        // Space in front of this wall block must be free (body)
         if (!this.isReplaceableAir(front) || !this.isReplaceableAir(frontUp)) {
-            // If aiming mid-wall, only need front of this cell free; feet may be lower
             if (!this.isReplaceableAir(front)) {
                 return null;
             }
         }
 
-        // Find a solid pad in front of the wall within a short vertical range
         BlockPos foundPad = null;
         for (int dy = 0; dy <= 3; dy++) {
             BlockPos candidate = front.down(dy);
@@ -328,14 +422,12 @@ public class AutoPearl extends Module {
             return null;
         }
 
-        // Prefer aiming at the wall face roughly at chest/head height above the pad
         int aimY = MathHelper.clamp_int(foundPad.getY() + 1, wall.getY() - 1, wall.getY() + 1);
         BlockPos aimBlock = new BlockPos(wall.getX(), aimY, wall.getZ());
         if (!this.isSolidBlock(aimBlock)) {
             aimBlock = wall;
         }
 
-        // Center of the exposed face (pearl hits wall → player lands near pad)
         double cx = aimBlock.getX() + 0.5 + face.getFrontOffsetX() * 0.51;
         double cy = aimBlock.getY() + 0.55;
         double cz = aimBlock.getZ() + 0.5 + face.getFrontOffsetZ() * 0.51;
@@ -370,7 +462,6 @@ public class AutoPearl extends Module {
         return true;
     }
 
-    /** Solid top with two air cells above (player can stand). */
     private boolean isStandableOn(BlockPos ground) {
         if (!this.isSolidBlock(ground)) {
             return false;
@@ -389,36 +480,20 @@ public class AutoPearl extends Module {
         return !block.getMaterial().blocksMovement() && !block.getMaterial().isSolid();
     }
 
-    /** Server look only — does not move client camera. */
+    /** Packet mode: server look only — client camera unchanged. */
     private void applySilentAim() {
         if (this.aimTarget == null || mc.thePlayer == null) {
             return;
         }
-        Vec3 eye = mc.thePlayer.getPositionEyes(1.0F);
-        double dx = this.aimTarget.xCoord - eye.xCoord;
-        double dy = this.aimTarget.yCoord - eye.yCoord;
-        double dz = this.aimTarget.zCoord - eye.zCoord;
-
-        double horiz = Math.sqrt(dx * dx + dz * dz);
-        double time = horiz / PEARL_SPEED;
-        if (time > 40.0) {
-            time = 40.0;
-        }
-        dy += 0.5 * PEARL_GRAVITY * time * time;
-
-        float baseYaw = RotationUtil.customRots ? RotationUtil.serverYaw : mc.thePlayer.rotationYaw;
-        float basePitch = RotationUtil.customRots ? RotationUtil.serverPitch : mc.thePlayer.rotationPitch;
-
-        float[] rots = RotationUtil.getRotationsTo(dx, dy, dz, baseYaw, basePitch);
-        float yaw = rots[0];
-        float pitch = MathHelper.clamp_float(rots[1], -90.0F, 90.0F);
+        float[] ideal = this.computeAimAngles(this.aimTarget, true);
+        float yaw = ideal[0];
+        float pitch = ideal[1];
 
         PacketUtil.sendPacket(new C03PacketPlayer.C05PacketPlayerLook(
                 yaw, pitch, mc.thePlayer.onGround));
         RotationUtil.serverYaw = yaw;
         RotationUtil.serverPitch = pitch;
         RotationUtil.customRots = true;
-        // client rotationYaw / rotationPitch intentionally unchanged
     }
 
     private void selectSlot(int slot) {
