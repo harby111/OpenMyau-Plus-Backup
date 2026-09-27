@@ -155,6 +155,7 @@ public class ModernClickGui extends GuiScreen {
                 Myau.moduleManager.getModule(BedTracker.class),
                 Myau.moduleManager.getModule(LightningTracker.class),
                 Myau.moduleManager.getModule(PackLogger.class),
+                Myau.moduleManager.getModule(Transactions.class),
                 Myau.moduleManager.getModule(NoRotate.class),
                 Myau.moduleManager.getModule(NickHider.class),
                 Myau.moduleManager.getModule(AntiObbyTrap.class),
