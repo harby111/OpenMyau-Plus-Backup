@@ -140,7 +140,6 @@ public class ClickGui extends GuiScreen {
         playerModules.add(Myau.moduleManager.getModule(ChestAura.class));
         playerModules.add(Myau.moduleManager.getModule(ThrowAura.class));
         playerModules.add(Myau.moduleManager.getModule(AutoPearl.class));
-		playerModules.add(Myau.moduleManager.getModule(Clutch.class));
 
         List<Module> miscModules = new ArrayList<>();
         miscModules.add(Myau.moduleManager.getModule(Spammer.class));
