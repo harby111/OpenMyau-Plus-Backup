@@ -132,6 +132,7 @@ public class Myau {
         moduleManager.modules.put(PackLogger.class, new PackLogger());
         moduleManager.modules.put(Transactions.class, new Transactions());
         moduleManager.modules.put(AutoPearl.class, new AutoPearl());
+		moduleManager.modules.put(Clutch.class, new Clutch());
         moduleManager.modules.put(HitBox.class, new HitBox());
         moduleManager.modules.put(KillAura.class, new KillAura());
         moduleManager.modules.put(LagRange.class, new LagRange());
