@@ -67,7 +67,7 @@ public class BedNuker extends Module {
     private boolean breaking = false;
     private boolean waitingForStart = false;
     private long whitelistScanAt = -1L;
-    public final ModeProperty mode = new ModeProperty("mode", 0, new String[]{"NORMAL", "SWAP"});
+    public final ModeProperty mode = new ModeProperty("mode", 0, new String[]{"NORMAL", "SWAP", "Legit"});
     public final FloatProperty range = new FloatProperty("range", 4.5F, 3.0F, 6.0F);
     public final PercentProperty speed = new PercentProperty("speed", 0);
     public final BooleanProperty groundSpeed = new BooleanProperty("ground-spoof", false);
@@ -272,6 +272,131 @@ public class BedNuker extends Module {
         return null;
     }
 
+
+    /** NORMAL (0) and Legit (2) hold the best tool the whole break. SWAP (1) only at the end. */
+    private boolean isNormalToolMode() {
+        return this.mode.getValue() != 1;
+    }
+
+    private boolean isLegitMode() {
+        return this.mode.getValue() == 2;
+    }
+
+    private BlockPos[] getBedParts(BlockPos bedPosition) {
+        IBlockState blockState = mc.theWorld.getBlockState(bedPosition);
+        if (!(blockState.getBlock() instanceof BlockBed)) {
+            return new BlockPos[]{bedPosition};
+        }
+        EnumPartType partType = blockState.getValue(BlockBed.PART);
+        EnumFacing facing = blockState.getValue(BlockBed.FACING);
+        BlockPos other = bedPosition.offset(partType == EnumPartType.HEAD ? facing.getOpposite() : facing);
+        return new BlockPos[]{bedPosition, other};
+    }
+
+    /** True if any horizontal/up face of the bed is open (air/replaceable). */
+    private boolean isBedFaceExposed(BlockPos bedPosition) {
+        for (BlockPos part : this.getBedParts(bedPosition)) {
+            if (!(mc.theWorld.getBlockState(part).getBlock() instanceof BlockBed)) {
+                continue;
+            }
+            for (EnumFacing face : new EnumFacing[]{EnumFacing.UP, EnumFacing.NORTH, EnumFacing.EAST, EnumFacing.SOUTH, EnumFacing.WEST}) {
+                Block block = mc.theWorld.getBlockState(part.offset(face)).getBlock();
+                if (BlockUtil.isReplaceable(block)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Legit dig: break cover blocks layer-by-layer (re-evaluated each target pick)
+     * until a bed face is exposed and the bed is in reach — then target the bed.
+     */
+    private BlockPos findLegitBreakTarget(BlockPos bedPosition, double eyeX, double eyeY, double eyeZ) {
+        if (bedPosition == null) {
+            return null;
+        }
+        // Bed reachable and at least one face open → break bed (NORMAL tool style)
+        if (this.isBedFaceExposed(bedPosition)
+                && PlayerUtil.isBlockWithinReach(bedPosition, eyeX, eyeY, eyeZ, this.range.getValue().doubleValue())) {
+            return bedPosition;
+        }
+
+        BlockPos[] parts = this.getBedParts(bedPosition);
+        ArrayList<BlockPos> candidates = new ArrayList<BlockPos>();
+
+        // Layer 1: immediate UP + 4 sides of both bed parts
+        for (BlockPos part : parts) {
+            for (EnumFacing face : new EnumFacing[]{EnumFacing.UP, EnumFacing.NORTH, EnumFacing.EAST, EnumFacing.SOUTH, EnumFacing.WEST}) {
+                BlockPos cover = part.offset(face);
+                Block block = mc.theWorld.getBlockState(cover).getBlock();
+                if (block instanceof BlockBed || BlockUtil.isReplaceable(block)) {
+                    continue;
+                }
+                if (!PlayerUtil.isBlockWithinReach(cover, eyeX, eyeY, eyeZ, this.range.getValue().doubleValue())) {
+                    continue;
+                }
+                if (this.toolCheck.getValue() && !this.hasProperTool(block)) {
+                    continue;
+                }
+                if (!candidates.contains(cover)) {
+                    candidates.add(cover);
+                }
+            }
+        }
+
+        // Layer 2: one block further out (thick shells) — only if layer 1 empty in range
+        if (candidates.isEmpty()) {
+            for (BlockPos part : parts) {
+                for (int dx = -2; dx <= 2; dx++) {
+                    for (int dy = 0; dy <= 2; dy++) {
+                        for (int dz = -2; dz <= 2; dz++) {
+                            int man = Math.abs(dx) + Math.abs(dy) + Math.abs(dz);
+                            if (man < 2 || man > 3) {
+                                continue;
+                            }
+                            BlockPos cover = part.add(dx, dy, dz);
+                            Block block = mc.theWorld.getBlockState(cover).getBlock();
+                            if (block instanceof BlockBed || BlockUtil.isReplaceable(block)) {
+                                continue;
+                            }
+                            if (!PlayerUtil.isBlockWithinReach(cover, eyeX, eyeY, eyeZ, this.range.getValue().doubleValue())) {
+                                continue;
+                            }
+                            if (this.toolCheck.getValue() && !this.hasProperTool(block)) {
+                                continue;
+                            }
+                            if (!candidates.contains(cover)) {
+                                candidates.add(cover);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if (candidates.isEmpty()) {
+            // Nothing to dig in range — try bed anyway if in reach
+            if (PlayerUtil.isBlockWithinReach(bedPosition, eyeX, eyeY, eyeZ, this.range.getValue().doubleValue())) {
+                return bedPosition;
+            }
+            return null;
+        }
+
+        // Closest to player first, then softer block (more natural path)
+        candidates.sort((a, b) -> {
+            double da = a.distanceSqToCenter(mc.thePlayer.posX, mc.thePlayer.posY + (double) mc.thePlayer.getEyeHeight(), mc.thePlayer.posZ);
+            double db = b.distanceSqToCenter(mc.thePlayer.posX, mc.thePlayer.posY + (double) mc.thePlayer.getEyeHeight(), mc.thePlayer.posZ);
+            int c = Double.compare(da, db);
+            if (c != 0) {
+                return c;
+            }
+            return Float.compare(this.calcBlockStrength(b), this.calcBlockStrength(a));
+        });
+        return candidates.get(0);
+    }
+
     private BlockPos findNearestBed() {
         return this.findTargetBed(mc.thePlayer.posX, mc.thePlayer.posY + (double) mc.thePlayer.getEyeHeight(), mc.thePlayer.posZ);
     }
@@ -304,6 +429,13 @@ public class BedNuker extends Module {
                     )
             );
             for (BlockPos blockPos : targets) {
+                if (this.isLegitMode()) {
+                    BlockPos legit = this.findLegitBreakTarget(blockPos, x, y, z);
+                    if (legit != null) {
+                        return legit;
+                    }
+                    continue;
+                }
                 if (this.surroundings.getValue()) {
                     BlockPos pos = this.validateBedPlacement(blockPos);
                     if (pos != null) {
@@ -381,7 +513,7 @@ public class BedNuker extends Module {
             }
             if (this.targetBed != null) {
                 int slot = ItemUtil.findInventorySlot(mc.thePlayer.inventory.currentItem, mc.theWorld.getBlockState(this.targetBed).getBlock());
-                if (this.mode.getValue() == 0 && this.savedSlot == -1) {
+                if (this.isNormalToolMode() && this.savedSlot == -1) {
                     this.savedSlot = mc.thePlayer.inventory.currentItem;
                     mc.thePlayer.inventory.currentItem = slot;
                     this.syncHeldItem();
@@ -582,7 +714,7 @@ public class BedNuker extends Module {
         if (!event.isCancelled()) {
             if (event.getPacket() instanceof S02PacketChat) {
                 String text = ((S02PacketChat) event.getPacket()).getChatComponent().getFormattedText();
-                if (text.contains("§e§lProtect your bed and destroy the enemy bed") || text.contains("§e§lDestroy the enemy bed and then eliminate them")) {
+                if (text.contains("Â§eÂ§lProtect your bed and destroy the enemy bed") || text.contains("Â§eÂ§lDestroy the enemy bed and then eliminate them")) {
                     this.waitingForStart = true;
                 }
             }
