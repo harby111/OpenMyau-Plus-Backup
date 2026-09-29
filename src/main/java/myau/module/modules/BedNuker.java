@@ -38,6 +38,7 @@ import net.minecraft.network.play.server.S12PacketEntityVelocity;
 import net.minecraft.network.play.server.S27PacketExplosion;
 import net.minecraft.potion.Potion;
 import net.minecraft.util.BlockPos;
+import net.minecraft.util.Vec3;
 import net.minecraft.util.EnumFacing;
 import net.minecraft.util.MathHelper;
 import net.minecraft.util.MovingObjectPosition;
@@ -308,10 +309,6 @@ public class BedNuker extends Module {
         return new Vec3((double) pos.getX() + 0.5, (double) pos.getY() + 0.5, (double) pos.getZ() + 0.5);
     }
 
-    /**
-     * True only when the player can actually hit the bed now:
-     * in range + ray from eyes reaches the bed (or lands on the bed block).
-     */
     private boolean canActuallyBreakBed(BlockPos bedPosition) {
         if (bedPosition == null || mc.theWorld == null || mc.thePlayer == null) {
             return false;
@@ -323,7 +320,6 @@ public class BedNuker extends Module {
         Vec3 eyes = this.eyePos();
         if (!PlayerUtil.isBlockWithinReach(bedPosition, eyes.xCoord, eyes.yCoord, eyes.zCoord, range)
                 && !PlayerUtil.canReach(bedPosition, range)) {
-            // try other bed part
             boolean anyPart = false;
             for (BlockPos part : this.getBedParts(bedPosition)) {
                 if (PlayerUtil.isBlockWithinReach(part, eyes.xCoord, eyes.yCoord, eyes.zCoord, range)
@@ -338,7 +334,6 @@ public class BedNuker extends Module {
             }
         }
 
-        // Ray toward each bed part center — must hit that bed (not an outer shell first)
         for (BlockPos part : this.getBedParts(bedPosition)) {
             if (!(mc.theWorld.getBlockState(part).getBlock() instanceof BlockBed)) {
                 continue;
@@ -350,7 +345,6 @@ public class BedNuker extends Module {
             Vec3 dest = this.blockCenter(part);
             MovingObjectPosition mop = mc.theWorld.rayTraceBlocks(eyes, dest, false, true, false);
             if (mop == null) {
-                // nothing in between
                 return true;
             }
             if (mop.typeOfHit == MovingObjectType.BLOCK) {
@@ -358,7 +352,6 @@ public class BedNuker extends Module {
                 if (hit.equals(part)) {
                     return true;
                 }
-                // Hit the other half of the same bed
                 for (BlockPos p2 : this.getBedParts(bedPosition)) {
                     if (hit.equals(p2)) {
                         return true;
@@ -422,18 +415,15 @@ public class BedNuker extends Module {
 
         ArrayList<BlockPos> candidates = new ArrayList<BlockPos>();
 
-        // Shell depth 1..LEGIT_MAX_SHELL around every bed part
         for (BlockPos part : parts) {
             for (int d = 1; d <= LEGIT_MAX_SHELL; d++) {
                 for (int dx = -d; dx <= d; dx++) {
                     for (int dy = -d; dy <= d; dy++) {
                         for (int dz = -d; dz <= d; dz++) {
-                            // surface of the cube shell at distance d (Chebyshev)
                             int cheb = Math.max(Math.max(Math.abs(dx), Math.abs(dy)), Math.abs(dz));
                             if (cheb != d) {
                                 continue;
                             }
-                            // skip digging far below bed
                             if (dy < -1) {
                                 continue;
                             }
@@ -458,7 +448,6 @@ public class BedNuker extends Module {
             }
         }
 
-        // Also: first solid block along the eye → bed ray (classic path dig)
         MovingObjectPosition along = mc.theWorld.rayTraceBlocks(eyes, bedCenter, false, true, false);
         if (along != null && along.typeOfHit == MovingObjectType.BLOCK) {
             BlockPos hit = along.getBlockPos();
@@ -477,10 +466,6 @@ public class BedNuker extends Module {
             return null;
         }
 
-        // Priority:
-        // 1) closer to player (what we can mine now)
-        // 2) closer to the eye→bed segment (on the path)
-        // 3) outer shell first is natural via player distance; softer as tie-break
         candidates.sort((a, b) -> {
             double da = a.distanceSqToCenter(mc.thePlayer.posX, mc.thePlayer.posY + (double) mc.thePlayer.getEyeHeight(), mc.thePlayer.posZ);
             double db = b.distanceSqToCenter(mc.thePlayer.posX, mc.thePlayer.posY + (double) mc.thePlayer.getEyeHeight(), mc.thePlayer.posZ);
@@ -494,7 +479,6 @@ public class BedNuker extends Module {
             if (c != 0) {
                 return c;
             }
-            // prefer outer (higher chebyshev to bed) when still equally close — dig shell from outside
             int ca = this.chebyshevToBed(a, parts);
             int cb = this.chebyshevToBed(b, parts);
             c = Integer.compare(cb, ca);
