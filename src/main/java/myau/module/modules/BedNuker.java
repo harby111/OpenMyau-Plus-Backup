@@ -273,6 +273,9 @@ public class BedNuker extends Module {
     }
 
 
+
+    private static final int LEGIT_MAX_SHELL = 3;
+
     /** NORMAL (0) and Legit (2) hold the best tool the whole break. SWAP (1) only at the end. */
     private boolean isNormalToolMode() {
         return this.mode.getValue() != 1;
@@ -293,77 +296,156 @@ public class BedNuker extends Module {
         return new BlockPos[]{bedPosition, other};
     }
 
-    /** True if any horizontal/up face of the bed is open (air/replaceable). */
-    private boolean isBedFaceExposed(BlockPos bedPosition) {
+    private Vec3 eyePos() {
+        return new Vec3(
+                mc.thePlayer.posX,
+                mc.thePlayer.posY + (double) mc.thePlayer.getEyeHeight(),
+                mc.thePlayer.posZ
+        );
+    }
+
+    private Vec3 blockCenter(BlockPos pos) {
+        return new Vec3((double) pos.getX() + 0.5, (double) pos.getY() + 0.5, (double) pos.getZ() + 0.5);
+    }
+
+    /**
+     * True only when the player can actually hit the bed now:
+     * in range + ray from eyes reaches the bed (or lands on the bed block).
+     */
+    private boolean canActuallyBreakBed(BlockPos bedPosition) {
+        if (bedPosition == null || mc.theWorld == null || mc.thePlayer == null) {
+            return false;
+        }
+        if (!(mc.theWorld.getBlockState(bedPosition).getBlock() instanceof BlockBed)) {
+            return false;
+        }
+        double range = this.range.getValue().doubleValue();
+        Vec3 eyes = this.eyePos();
+        if (!PlayerUtil.isBlockWithinReach(bedPosition, eyes.xCoord, eyes.yCoord, eyes.zCoord, range)
+                && !PlayerUtil.canReach(bedPosition, range)) {
+            // try other bed part
+            boolean anyPart = false;
+            for (BlockPos part : this.getBedParts(bedPosition)) {
+                if (PlayerUtil.isBlockWithinReach(part, eyes.xCoord, eyes.yCoord, eyes.zCoord, range)
+                        || PlayerUtil.canReach(part, range)) {
+                    anyPart = true;
+                    bedPosition = part;
+                    break;
+                }
+            }
+            if (!anyPart) {
+                return false;
+            }
+        }
+
+        // Ray toward each bed part center — must hit that bed (not an outer shell first)
         for (BlockPos part : this.getBedParts(bedPosition)) {
             if (!(mc.theWorld.getBlockState(part).getBlock() instanceof BlockBed)) {
                 continue;
             }
-            for (EnumFacing face : new EnumFacing[]{EnumFacing.UP, EnumFacing.NORTH, EnumFacing.EAST, EnumFacing.SOUTH, EnumFacing.WEST}) {
-                Block block = mc.theWorld.getBlockState(part.offset(face)).getBlock();
-                if (BlockUtil.isReplaceable(block)) {
+            if (!PlayerUtil.isBlockWithinReach(part, eyes.xCoord, eyes.yCoord, eyes.zCoord, range)
+                    && !PlayerUtil.canReach(part, range)) {
+                continue;
+            }
+            Vec3 dest = this.blockCenter(part);
+            MovingObjectPosition mop = mc.theWorld.rayTraceBlocks(eyes, dest, false, true, false);
+            if (mop == null) {
+                // nothing in between
+                return true;
+            }
+            if (mop.typeOfHit == MovingObjectType.BLOCK) {
+                BlockPos hit = mop.getBlockPos();
+                if (hit.equals(part)) {
                     return true;
+                }
+                // Hit the other half of the same bed
+                for (BlockPos p2 : this.getBedParts(bedPosition)) {
+                    if (hit.equals(p2)) {
+                        return true;
+                    }
                 }
             }
         }
         return false;
     }
 
+    private boolean isSolidCover(BlockPos pos) {
+        if (pos == null || mc.theWorld.isAirBlock(pos)) {
+            return false;
+        }
+        Block block = mc.theWorld.getBlockState(pos).getBlock();
+        if (block instanceof BlockBed || BlockUtil.isReplaceable(block)) {
+            return false;
+        }
+        Material mat = block.getMaterial();
+        return mat != null && mat.isSolid() && !mat.isLiquid();
+    }
+
+    private int chebyshevToBed(BlockPos pos, BlockPos[] parts) {
+        int best = Integer.MAX_VALUE;
+        for (BlockPos part : parts) {
+            int d = Math.max(
+                    Math.max(Math.abs(pos.getX() - part.getX()), Math.abs(pos.getY() - part.getY())),
+                    Math.abs(pos.getZ() - part.getZ())
+            );
+            if (d < best) {
+                best = d;
+            }
+        }
+        return best;
+    }
+
     /**
-     * Legit dig: break cover blocks layer-by-layer (re-evaluated each target pick)
-     * until a bed face is exposed and the bed is in reach — then target the bed.
+     * Next block on the path to the bed for Legit multi-layer dig.
+     * Never returns the bed unless canActuallyBreakBed.
      */
     private BlockPos findLegitBreakTarget(BlockPos bedPosition, double eyeX, double eyeY, double eyeZ) {
         if (bedPosition == null) {
             return null;
         }
-        // Bed reachable and at least one face open → break bed (NORMAL tool style)
-        if (this.isBedFaceExposed(bedPosition)
-                && PlayerUtil.isBlockWithinReach(bedPosition, eyeX, eyeY, eyeZ, this.range.getValue().doubleValue())) {
+        if (this.canActuallyBreakBed(bedPosition)) {
             return bedPosition;
         }
 
         BlockPos[] parts = this.getBedParts(bedPosition);
-        ArrayList<BlockPos> candidates = new ArrayList<BlockPos>();
-
-        // Layer 1: immediate UP + 4 sides of both bed parts
-        for (BlockPos part : parts) {
-            for (EnumFacing face : new EnumFacing[]{EnumFacing.UP, EnumFacing.NORTH, EnumFacing.EAST, EnumFacing.SOUTH, EnumFacing.WEST}) {
-                BlockPos cover = part.offset(face);
-                Block block = mc.theWorld.getBlockState(cover).getBlock();
-                if (block instanceof BlockBed || BlockUtil.isReplaceable(block)) {
-                    continue;
-                }
-                if (!PlayerUtil.isBlockWithinReach(cover, eyeX, eyeY, eyeZ, this.range.getValue().doubleValue())) {
-                    continue;
-                }
-                if (this.toolCheck.getValue() && !this.hasProperTool(block)) {
-                    continue;
-                }
-                if (!candidates.contains(cover)) {
-                    candidates.add(cover);
-                }
-            }
+        double range = this.range.getValue().doubleValue();
+        Vec3 eyes = new Vec3(eyeX, eyeY, eyeZ);
+        Vec3 bedCenter = this.blockCenter(parts[0]);
+        if (parts.length > 1) {
+            Vec3 c2 = this.blockCenter(parts[1]);
+            bedCenter = new Vec3(
+                    (bedCenter.xCoord + c2.xCoord) * 0.5,
+                    (bedCenter.yCoord + c2.yCoord) * 0.5,
+                    (bedCenter.zCoord + c2.zCoord) * 0.5
+            );
         }
 
-        // Layer 2: one block further out (thick shells) — only if layer 1 empty in range
-        if (candidates.isEmpty()) {
-            for (BlockPos part : parts) {
-                for (int dx = -2; dx <= 2; dx++) {
-                    for (int dy = 0; dy <= 2; dy++) {
-                        for (int dz = -2; dz <= 2; dz++) {
-                            int man = Math.abs(dx) + Math.abs(dy) + Math.abs(dz);
-                            if (man < 2 || man > 3) {
+        ArrayList<BlockPos> candidates = new ArrayList<BlockPos>();
+
+        // Shell depth 1..LEGIT_MAX_SHELL around every bed part
+        for (BlockPos part : parts) {
+            for (int d = 1; d <= LEGIT_MAX_SHELL; d++) {
+                for (int dx = -d; dx <= d; dx++) {
+                    for (int dy = -d; dy <= d; dy++) {
+                        for (int dz = -d; dz <= d; dz++) {
+                            // surface of the cube shell at distance d (Chebyshev)
+                            int cheb = Math.max(Math.max(Math.abs(dx), Math.abs(dy)), Math.abs(dz));
+                            if (cheb != d) {
+                                continue;
+                            }
+                            // skip digging far below bed
+                            if (dy < -1) {
                                 continue;
                             }
                             BlockPos cover = part.add(dx, dy, dz);
+                            if (!this.isSolidCover(cover)) {
+                                continue;
+                            }
+                            if (!PlayerUtil.isBlockWithinReach(cover, eyeX, eyeY, eyeZ, range)
+                                    && !PlayerUtil.canReach(cover, range)) {
+                                continue;
+                            }
                             Block block = mc.theWorld.getBlockState(cover).getBlock();
-                            if (block instanceof BlockBed || BlockUtil.isReplaceable(block)) {
-                                continue;
-                            }
-                            if (!PlayerUtil.isBlockWithinReach(cover, eyeX, eyeY, eyeZ, this.range.getValue().doubleValue())) {
-                                continue;
-                            }
                             if (this.toolCheck.getValue() && !this.hasProperTool(block)) {
                                 continue;
                             }
@@ -376,15 +458,29 @@ public class BedNuker extends Module {
             }
         }
 
-        if (candidates.isEmpty()) {
-            // Nothing to dig in range — try bed anyway if in reach
-            if (PlayerUtil.isBlockWithinReach(bedPosition, eyeX, eyeY, eyeZ, this.range.getValue().doubleValue())) {
-                return bedPosition;
+        // Also: first solid block along the eye → bed ray (classic path dig)
+        MovingObjectPosition along = mc.theWorld.rayTraceBlocks(eyes, bedCenter, false, true, false);
+        if (along != null && along.typeOfHit == MovingObjectType.BLOCK) {
+            BlockPos hit = along.getBlockPos();
+            if (this.isSolidCover(hit)
+                    && (PlayerUtil.isBlockWithinReach(hit, eyeX, eyeY, eyeZ, range) || PlayerUtil.canReach(hit, range))) {
+                Block block = mc.theWorld.getBlockState(hit).getBlock();
+                if (!(this.toolCheck.getValue() && !this.hasProperTool(block))) {
+                    if (!candidates.contains(hit)) {
+                        candidates.add(hit);
+                    }
+                }
             }
+        }
+
+        if (candidates.isEmpty()) {
             return null;
         }
 
-        // Closest to player first, then softer block (more natural path)
+        // Priority:
+        // 1) closer to player (what we can mine now)
+        // 2) closer to the eye→bed segment (on the path)
+        // 3) outer shell first is natural via player distance; softer as tie-break
         candidates.sort((a, b) -> {
             double da = a.distanceSqToCenter(mc.thePlayer.posX, mc.thePlayer.posY + (double) mc.thePlayer.getEyeHeight(), mc.thePlayer.posZ);
             double db = b.distanceSqToCenter(mc.thePlayer.posX, mc.thePlayer.posY + (double) mc.thePlayer.getEyeHeight(), mc.thePlayer.posZ);
@@ -392,9 +488,49 @@ public class BedNuker extends Module {
             if (c != 0) {
                 return c;
             }
+            double pa = distPointToSegmentSq(this.blockCenter(a), eyes, bedCenter);
+            double pb = distPointToSegmentSq(this.blockCenter(b), eyes, bedCenter);
+            c = Double.compare(pa, pb);
+            if (c != 0) {
+                return c;
+            }
+            // prefer outer (higher chebyshev to bed) when still equally close — dig shell from outside
+            int ca = this.chebyshevToBed(a, parts);
+            int cb = this.chebyshevToBed(b, parts);
+            c = Integer.compare(cb, ca);
+            if (c != 0) {
+                return c;
+            }
             return Float.compare(this.calcBlockStrength(b), this.calcBlockStrength(a));
         });
+
         return candidates.get(0);
+    }
+
+    private static double distPointToSegmentSq(Vec3 p, Vec3 a, Vec3 b) {
+        double abx = b.xCoord - a.xCoord;
+        double aby = b.yCoord - a.yCoord;
+        double abz = b.zCoord - a.zCoord;
+        double len2 = abx * abx + aby * aby + abz * abz;
+        if (len2 < 1.0E-8) {
+            double dx = p.xCoord - a.xCoord;
+            double dy = p.yCoord - a.yCoord;
+            double dz = p.zCoord - a.zCoord;
+            return dx * dx + dy * dy + dz * dz;
+        }
+        double t = ((p.xCoord - a.xCoord) * abx + (p.yCoord - a.yCoord) * aby + (p.zCoord - a.zCoord) * abz) / len2;
+        if (t < 0.0) {
+            t = 0.0;
+        } else if (t > 1.0) {
+            t = 1.0;
+        }
+        double cx = a.xCoord + abx * t;
+        double cy = a.yCoord + aby * t;
+        double cz = a.zCoord + abz * t;
+        double dx = p.xCoord - cx;
+        double dy = p.yCoord - cy;
+        double dz = p.zCoord - cz;
+        return dx * dx + dy * dy + dz * dz;
     }
 
     private BlockPos findNearestBed() {
