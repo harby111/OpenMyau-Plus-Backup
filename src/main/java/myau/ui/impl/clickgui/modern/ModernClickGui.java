@@ -79,6 +79,7 @@ public class ModernClickGui extends GuiScreen {
                 Myau.moduleManager.getModule(NoFall.class),
                 Myau.moduleManager.getModule(NoSlow.class),
                 Myau.moduleManager.getModule(KeepSprint.class),
+				Myau.moduleManager.getModule(KeepRange.class),
                 Myau.moduleManager.getModule(Eagle.class),
                 Myau.moduleManager.getModule(NoJumpDelay.class),
                 Myau.moduleManager.getModule(AntiVoid.class)

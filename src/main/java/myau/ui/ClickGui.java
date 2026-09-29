@@ -76,6 +76,7 @@ public class ClickGui extends GuiScreen {
         movementModules.add(Myau.moduleManager.getModule(NoFall.class));
         movementModules.add(Myau.moduleManager.getModule(NoSlow.class));
         movementModules.add(Myau.moduleManager.getModule(KeepSprint.class));
+		movementModules.add(Myau.moduleManager.getModule(KeepRange.class));
         movementModules.add(Myau.moduleManager.getModule(Eagle.class));
         movementModules.add(Myau.moduleManager.getModule(NoJumpDelay.class));
         movementModules.add(Myau.moduleManager.getModule(AntiVoid.class));

@@ -129,6 +129,7 @@ public class Myau {
         moduleManager.modules.put(Disabler.class, new Disabler());
         moduleManager.modules.put(Displace.class, new Displace());
         moduleManager.modules.put(KeepSprint.class, new KeepSprint());
+		moduleManager.modules.put(KeepRange.class, new KeepRange());
         moduleManager.modules.put(FlagDetector.class, new FlagDetector());
 		moduleManager.modules.put(LatencyAlerts.class, new LatencyAlerts());
         moduleManager.modules.put(PackLogger.class, new PackLogger());
