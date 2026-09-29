@@ -168,7 +168,8 @@ public class ModernClickGui extends GuiScreen {
                 Myau.moduleManager.getModule(MouseRawInput.class),
                 Myau.moduleManager.getModule(BedwarUtils.class),
                 Myau.moduleManager.getModule(AutoAuth.class),
-                Myau.moduleManager.getModule(AutoHypixel.class)
+                Myau.moduleManager.getModule(AutoHypixel.class),
+				Myau.moduleManager.getModule(LatencyAlerts.class)
         );
 
         Comparator<Module> comparator = Comparator.comparing(m -> m.getName().toLowerCase());

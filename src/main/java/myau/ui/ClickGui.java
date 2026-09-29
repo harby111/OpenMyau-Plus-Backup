@@ -162,6 +162,7 @@ public class ClickGui extends GuiScreen {
         miscModules.add(Myau.moduleManager.getModule(AutoHypixel.class));
         miscModules.add(Myau.moduleManager.getModule(BedwarUtils.class));
         miscModules.add(Myau.moduleManager.getModule(AutoAuth.class));
+		miscModules.add(Myau.moduleManager.getModule(LatencyAlerts.class));
 
         List<Module> scriptModules = new ArrayList<>(Myau.moduleManager.dynamicModules.values());
 
