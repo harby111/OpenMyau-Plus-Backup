@@ -38,11 +38,11 @@ import net.minecraft.network.play.server.S12PacketEntityVelocity;
 import net.minecraft.network.play.server.S27PacketExplosion;
 import net.minecraft.potion.Potion;
 import net.minecraft.util.BlockPos;
-import net.minecraft.util.Vec3;
 import net.minecraft.util.EnumFacing;
 import net.minecraft.util.MathHelper;
 import net.minecraft.util.MovingObjectPosition;
 import net.minecraft.util.MovingObjectPosition.MovingObjectType;
+import net.minecraft.util.Vec3;
 import org.lwjgl.opengl.GL11;
 
 import java.awt.*;
@@ -309,6 +309,10 @@ public class BedNuker extends Module {
         return new Vec3((double) pos.getX() + 0.5, (double) pos.getY() + 0.5, (double) pos.getZ() + 0.5);
     }
 
+    /**
+     * True only when the player can actually hit the bed now:
+     * in range + ray from eyes reaches the bed (or lands on the bed block).
+     */
     private boolean canActuallyBreakBed(BlockPos bedPosition) {
         if (bedPosition == null || mc.theWorld == null || mc.thePlayer == null) {
             return false;
@@ -447,6 +451,7 @@ public class BedNuker extends Module {
                 }
             }
         }
+
 
         MovingObjectPosition along = mc.theWorld.rayTraceBlocks(eyes, bedCenter, false, true, false);
         if (along != null && along.typeOfHit == MovingObjectType.BLOCK) {
@@ -834,7 +839,7 @@ public class BedNuker extends Module {
         if (!event.isCancelled()) {
             if (event.getPacket() instanceof S02PacketChat) {
                 String text = ((S02PacketChat) event.getPacket()).getChatComponent().getFormattedText();
-                if (text.contains("Â§eÂ§lProtect your bed and destroy the enemy bed") || text.contains("Â§eÂ§lDestroy the enemy bed and then eliminate them")) {
+                if (text.contains("Ã§eÃ§lProtect your bed and destroy the enemy bed") || text.contains("Ã§eÃ§lDestroy the enemy bed and then eliminate them")) {
                     this.waitingForStart = true;
                 }
             }
