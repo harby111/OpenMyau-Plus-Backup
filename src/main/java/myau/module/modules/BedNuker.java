@@ -59,6 +59,8 @@ public class BedNuker extends Module {
     private final Color colorYellow = new Color(ChatColors.YELLOW.toAwtColor());
     private final Color colorGreen = new Color(ChatColors.GREEN.toAwtColor());
     private BlockPos targetBed = null;
+	private BlockPos lockedBed = null;
+	private final ArrayList<BlockPos> legitQueue = new ArrayList<BlockPos>();
     private int breakStage = 0;
     private int tickCounter = 0;
     private float breakProgress = 0.0F;
@@ -92,6 +94,8 @@ public class BedNuker extends Module {
         this.isBed = false;
         this.readyToBreak = false;
         this.breaking = false;
+        this.lockedBed = null;
+        this.legitQueue.clear();
     }
 
     private void scheduleWhitelistScan() {
@@ -493,6 +497,138 @@ public class BedNuker extends Module {
 
         return candidates.get(0);
     }
+	
+    private void clearLegitPlan() {
+        this.lockedBed = null;
+        this.legitQueue.clear();
+    }
+
+    private BlockPos findNearestBedBlockOnly(double x, double y, double z) {
+        ArrayList<BlockPos> beds = new ArrayList<BlockPos>();
+        int sX = MathHelper.floor_double(x);
+        int sY = MathHelper.floor_double(y);
+        int sZ = MathHelper.floor_double(z);
+        for (int i = sX - 6; i <= sX + 6; i++) {
+            for (int j = sY - 6; j <= sY + 6; j++) {
+                for (int k = sZ - 6; k <= sZ + 6; k++) {
+                    BlockPos p = new BlockPos(i, j, k);
+                    if (this.whiteList.getValue() && this.bedWhitelist.contains(p)) {
+                        continue;
+                    }
+                    if (mc.theWorld.getBlockState(p).getBlock() instanceof BlockBed
+                            && PlayerUtil.isBlockWithinReach(p, x, y, z, this.range.getValue().doubleValue())) {
+                        beds.add(p);
+                    }
+                }
+            }
+        }
+        if (beds.isEmpty()) {
+            return null;
+        }
+        beds.sort(Comparator.comparingDouble(
+                bp -> bp.distanceSqToCenter(mc.thePlayer.posX, mc.thePlayer.posY + (double) mc.thePlayer.getEyeHeight(), mc.thePlayer.posZ)
+        ));
+        return beds.get(0);
+    }
+
+    private void buildLegitPlan(BlockPos bedPart) {
+        this.clearLegitPlan();
+        if (bedPart == null || !(mc.theWorld.getBlockState(bedPart).getBlock() instanceof BlockBed)) {
+            return;
+        }
+
+        BlockPos[] parts = this.getBedParts(bedPart);
+        this.lockedBed = parts[0];
+
+        int minBedY = parts[0].getY();
+        for (int i = 1; i < parts.length; i++) {
+            if (parts[i].getY() < minBedY) {
+                minBedY = parts[i].getY();
+            }
+        }
+
+        Vec3 eyes = this.eyePos();
+        Vec3 c0 = this.blockCenter(parts[0]);
+        Vec3 bedCenter;
+        if (parts.length > 1) {
+            Vec3 c1 = this.blockCenter(parts[1]);
+            bedCenter = new Vec3(
+                    (c0.xCoord + c1.xCoord) * 0.5,
+                    (c0.yCoord + c1.yCoord) * 0.5,
+                    (c0.zCoord + c1.zCoord) * 0.5
+            );
+        } else {
+            bedCenter = c0;
+        }
+
+        double dist = eyes.distanceTo(bedCenter);
+        int steps = Math.max(8, (int) (dist * 25.0));
+        ArrayList<BlockPos> ordered = new ArrayList<BlockPos>();
+
+        for (int s = 0; s <= steps; s++) {
+            double t = (double) s / (double) steps;
+            double px = eyes.xCoord + (bedCenter.xCoord - eyes.xCoord) * t;
+            double py = eyes.yCoord + (bedCenter.yCoord - eyes.yCoord) * t;
+            double pz = eyes.zCoord + (bedCenter.zCoord - eyes.zCoord) * t;
+            BlockPos bp = new BlockPos(px, py, pz);
+            if (bp.getY() < minBedY) {
+                continue;
+            }
+            if (ordered.contains(bp)) {
+                continue;
+            }
+            Block block = mc.theWorld.getBlockState(bp).getBlock();
+            if (block instanceof BlockBed) {
+                ordered.add(bp);
+                break;
+            }
+            if (this.isSolidCover(bp)) {
+                if (this.toolCheck.getValue() && !this.hasProperTool(block)) {
+                    continue;
+                }
+                ordered.add(bp);
+            }
+        }
+
+        for (BlockPos part : parts) {
+            if (!ordered.contains(part)) {
+                ordered.add(part);
+            }
+        }
+
+        this.legitQueue.addAll(ordered);
+    }
+
+    private BlockPos nextLegitFromQueue() {
+        double range = this.range.getValue().doubleValue();
+        while (!this.legitQueue.isEmpty()) {
+            BlockPos p = this.legitQueue.get(0);
+            if (mc.theWorld.isAirBlock(p) || BlockUtil.isReplaceable(mc.theWorld.getBlockState(p).getBlock())) {
+                this.legitQueue.remove(0);
+                continue;
+            }
+            if (!PlayerUtil.canReach(p, range) && !PlayerUtil.isBlockWithinReach(
+                    p, mc.thePlayer.posX, mc.thePlayer.posY + (double) mc.thePlayer.getEyeHeight(), mc.thePlayer.posZ, range)) {
+                this.clearLegitPlan();
+                return null;
+            }
+            return p;
+        }
+        this.clearLegitPlan();
+        return null;
+    }
+
+    private boolean isLockedBedStillPresent() {
+        if (this.lockedBed == null) {
+            return false;
+        }
+        for (BlockPos part : this.getBedParts(this.lockedBed)) {
+            if (mc.theWorld.getBlockState(part).getBlock() instanceof BlockBed) {
+                return true;
+            }
+        }
+        return mc.theWorld.getBlockState(this.lockedBed).getBlock() instanceof BlockBed;
+    }
 
     private static double distPointToSegmentSq(Vec3 p, Vec3 a, Vec3 b) {
         double abx = b.xCoord - a.xCoord;
@@ -626,8 +762,34 @@ public class BedNuker extends Module {
             if (this.targetBed != null) {
                 if (mc.theWorld.isAirBlock(this.targetBed) || !PlayerUtil.canReach(this.targetBed, this.range.getValue().doubleValue())) {
                     this.restoreSlot();
-                    this.resetBreaking();
-                } else if (!this.isBed) {
+                    if (this.isLegitMode() && !this.legitQueue.isEmpty()) {
+                        if (this.targetBed != null && mc.theWorld != null && mc.thePlayer != null) {
+                            mc.theWorld.sendBlockBreakProgress(mc.thePlayer.getEntityId(), this.targetBed, -1);
+                        }
+                        if (!this.legitQueue.isEmpty() && this.legitQueue.get(0).equals(this.targetBed)) {
+                            this.legitQueue.remove(0);
+                        }
+                        this.breakStage = 0;
+                        this.tickCounter = 0;
+                        this.breakProgress = 0.0F;
+                        this.breaking = false;
+                        this.readyToBreak = false;
+                        this.targetBed = null;
+
+                        if (!this.isLockedBedStillPresent()) {
+                            this.clearLegitPlan();
+                        } else {
+                            this.targetBed = this.nextLegitFromQueue();
+                            this.isBed = this.targetBed != null
+                                    && mc.theWorld.getBlockState(this.targetBed).getBlock() instanceof BlockBed;
+                            if (this.targetBed != null) {
+                                this.readyToBreak = true;
+                            }
+                        }
+                    } else {
+                        this.resetBreaking();
+                    }
+                } else if (!this.isBed && !this.isLegitMode()) {
                     BlockPos nearestBed = this.findNearestBed();
                     if (nearestBed != null && mc.theWorld.getBlockState(nearestBed).getBlock() instanceof BlockBed) {
                         this.resetBreaking();
@@ -699,14 +861,62 @@ public class BedNuker extends Module {
                         break;
                     case 2:
                         this.restoreSlot();
-                        this.resetBreaking();
+                        if (this.isLegitMode()) {
+                            if (this.targetBed != null && mc.theWorld != null && mc.thePlayer != null) {
+                                mc.theWorld.sendBlockBreakProgress(mc.thePlayer.getEntityId(), this.targetBed, -1);
+                            }
+                            if (!this.legitQueue.isEmpty() && this.targetBed != null
+                                    && this.legitQueue.get(0).equals(this.targetBed)) {
+                                this.legitQueue.remove(0);
+                            }
+                            this.breakStage = 0;
+                            this.tickCounter = 0;
+                            this.breakProgress = 0.0F;
+                            this.breaking = false;
+                            this.readyToBreak = false;
+                            this.targetBed = null;
+
+                            if (!this.isLockedBedStillPresent()) {
+                                this.clearLegitPlan();
+                                this.timer.reset();
+                            } else {
+                                this.targetBed = this.nextLegitFromQueue();
+                                this.isBed = this.targetBed != null
+                                        && mc.theWorld.getBlockState(this.targetBed).getBlock() instanceof BlockBed;
+                                if (this.targetBed != null) {
+                                    this.readyToBreak = true;
+                                }
+                            }
+                        } else {
+                            this.resetBreaking();
+                        }
+                        break;
                 }
                 if (this.targetBed != null) {
                     return;
                 }
             }
             if (mc.thePlayer.capabilities.allowEdit && this.timer.hasTimeElapsed(500)) {
-                this.targetBed = this.findNearestBed();
+                if (this.isLegitMode()) {
+                    if (!this.legitQueue.isEmpty() && this.isLockedBedStillPresent()) {
+                        this.targetBed = this.nextLegitFromQueue();
+                    } else {
+                        this.clearLegitPlan();
+                        BlockPos bed = this.findNearestBedBlockOnly(
+                                mc.thePlayer.posX,
+                                mc.thePlayer.posY + (double) mc.thePlayer.getEyeHeight(),
+                                mc.thePlayer.posZ
+                        );
+                        if (bed != null) {
+                            this.buildLegitPlan(bed);
+                            this.targetBed = this.nextLegitFromQueue();
+                        } else {
+                            this.targetBed = null;
+                        }
+                    }
+                } else {
+                    this.targetBed = this.findNearestBed();
+                }
                 this.breakStage = 0;
                 this.tickCounter = 0;
                 this.breakProgress = 0.0F;
