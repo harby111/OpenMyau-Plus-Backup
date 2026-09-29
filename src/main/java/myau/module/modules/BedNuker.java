@@ -277,7 +277,6 @@ public class BedNuker extends Module {
 
     private static final int LEGIT_MAX_SHELL = 3;
 
-    /** NORMAL (0) and Legit (2) hold the best tool the whole break. SWAP (1) only at the end. */
     private boolean isNormalToolMode() {
         return this.mode.getValue() != 1;
     }
@@ -309,10 +308,6 @@ public class BedNuker extends Module {
         return new Vec3((double) pos.getX() + 0.5, (double) pos.getY() + 0.5, (double) pos.getZ() + 0.5);
     }
 
-    /**
-     * True only when the player can actually hit the bed now:
-     * in range + ray from eyes reaches the bed (or lands on the bed block).
-     */
     private boolean canActuallyBreakBed(BlockPos bedPosition) {
         if (bedPosition == null || mc.theWorld == null || mc.thePlayer == null) {
             return false;
@@ -401,6 +396,13 @@ public class BedNuker extends Module {
         }
 
         BlockPos[] parts = this.getBedParts(bedPosition);
+        int minBedY = parts[0].getY();
+        for (int i = 1; i < parts.length; i++) {
+            if (parts[i].getY() < minBedY) {
+                minBedY = parts[i].getY();
+            }
+        }
+
         double range = this.range.getValue().doubleValue();
         Vec3 eyes = new Vec3(eyeX, eyeY, eyeZ);
 
@@ -408,19 +410,31 @@ public class BedNuker extends Module {
         {
             Vec3 c0 = this.blockCenter(parts[0]);
             if (parts.length > 1) {
-                Vec3 c2 = this.blockCenter(parts[1]);
+                Vec3 c1 = this.blockCenter(parts[1]);
                 bedCenter = new Vec3(
-                        (c0.xCoord + c2.xCoord) * 0.5,
-                        (c0.yCoord + c2.yCoord) * 0.5,
-                        (c0.zCoord + c2.zCoord) * 0.5
+                        (c0.xCoord + c1.xCoord) * 0.5,
+                        (c0.yCoord + c1.yCoord) * 0.5,
+                        (c0.zCoord + c1.zCoord) * 0.5
                 );
             } else {
                 bedCenter = c0;
             }
         }
 
-        ArrayList<BlockPos> candidates = new ArrayList<BlockPos>();
+        MovingObjectPosition along = mc.theWorld.rayTraceBlocks(eyes, bedCenter, false, true, false);
+        if (along != null && along.typeOfHit == MovingObjectType.BLOCK) {
+            BlockPos hit = along.getBlockPos();
+            if (hit.getY() >= minBedY
+                    && this.isSolidCover(hit)
+                    && (PlayerUtil.isBlockWithinReach(hit, eyeX, eyeY, eyeZ, range) || PlayerUtil.canReach(hit, range))) {
+                Block block = mc.theWorld.getBlockState(hit).getBlock();
+                if (!(this.toolCheck.getValue() && !this.hasProperTool(block))) {
+                    return hit;
+                }
+            }
+        }
 
+        ArrayList<BlockPos> candidates = new ArrayList<BlockPos>();
         for (BlockPos part : parts) {
             for (int d = 1; d <= LEGIT_MAX_SHELL; d++) {
                 for (int dx = -d; dx <= d; dx++) {
@@ -430,10 +444,13 @@ public class BedNuker extends Module {
                             if (cheb != d) {
                                 continue;
                             }
-                            if (dy < -1) {
+                            if (dy < 0) {
                                 continue;
                             }
                             BlockPos cover = part.add(dx, dy, dz);
+                            if (cover.getY() < minBedY) {
+                                continue;
+                            }
                             if (!this.isSolidCover(cover)) {
                                 continue;
                             }
@@ -454,40 +471,20 @@ public class BedNuker extends Module {
             }
         }
 
-        MovingObjectPosition along = mc.theWorld.rayTraceBlocks(eyes, bedCenter, false, true, false);
-        if (along != null && along.typeOfHit == MovingObjectType.BLOCK) {
-            BlockPos hit = along.getBlockPos();
-            if (this.isSolidCover(hit)
-                    && (PlayerUtil.isBlockWithinReach(hit, eyeX, eyeY, eyeZ, range) || PlayerUtil.canReach(hit, range))) {
-                Block block = mc.theWorld.getBlockState(hit).getBlock();
-                if (!(this.toolCheck.getValue() && !this.hasProperTool(block))) {
-                    if (!candidates.contains(hit)) {
-                        candidates.add(hit);
-                    }
-                }
-            }
-        }
-
         if (candidates.isEmpty()) {
             return null;
         }
 
         candidates.sort((a, b) -> {
-            double da = a.distanceSqToCenter(mc.thePlayer.posX, mc.thePlayer.posY + (double) mc.thePlayer.getEyeHeight(), mc.thePlayer.posZ);
-            double db = b.distanceSqToCenter(mc.thePlayer.posX, mc.thePlayer.posY + (double) mc.thePlayer.getEyeHeight(), mc.thePlayer.posZ);
-            int c = Double.compare(da, db);
-            if (c != 0) {
-                return c;
-            }
             double pa = distPointToSegmentSq(this.blockCenter(a), eyes, bedCenter);
             double pb = distPointToSegmentSq(this.blockCenter(b), eyes, bedCenter);
-            c = Double.compare(pa, pb);
+            int c = Double.compare(pa, pb);
             if (c != 0) {
                 return c;
             }
             int ca = this.chebyshevToBed(a, parts);
             int cb = this.chebyshevToBed(b, parts);
-            c = Integer.compare(cb, ca);
+            c = Integer.compare(ca, cb);
             if (c != 0) {
                 return c;
             }
