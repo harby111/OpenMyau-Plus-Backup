@@ -392,10 +392,6 @@ public class BedNuker extends Module {
         return best;
     }
 
-    /**
-     * Next block on the path to the bed for Legit multi-layer dig.
-     * Never returns the bed unless canActuallyBreakBed.
-     */
     private BlockPos findLegitBreakTarget(BlockPos bedPosition, double eyeX, double eyeY, double eyeZ) {
         if (bedPosition == null) {
             return null;
@@ -407,14 +403,20 @@ public class BedNuker extends Module {
         BlockPos[] parts = this.getBedParts(bedPosition);
         double range = this.range.getValue().doubleValue();
         Vec3 eyes = new Vec3(eyeX, eyeY, eyeZ);
-        Vec3 bedCenter = this.blockCenter(parts[0]);
-        if (parts.length > 1) {
-            Vec3 c2 = this.blockCenter(parts[1]);
-            bedCenter = new Vec3(
-                    (bedCenter.xCoord + c2.xCoord) * 0.5,
-                    (bedCenter.yCoord + c2.yCoord) * 0.5,
-                    (bedCenter.zCoord + c2.zCoord) * 0.5
-            );
+
+        final Vec3 bedCenter;
+        {
+            Vec3 c0 = this.blockCenter(parts[0]);
+            if (parts.length > 1) {
+                Vec3 c2 = this.blockCenter(parts[1]);
+                bedCenter = new Vec3(
+                        (c0.xCoord + c2.xCoord) * 0.5,
+                        (c0.yCoord + c2.yCoord) * 0.5,
+                        (c0.zCoord + c2.zCoord) * 0.5
+                );
+            } else {
+                bedCenter = c0;
+            }
         }
 
         ArrayList<BlockPos> candidates = new ArrayList<BlockPos>();
@@ -451,7 +453,6 @@ public class BedNuker extends Module {
                 }
             }
         }
-
 
         MovingObjectPosition along = mc.theWorld.rayTraceBlocks(eyes, bedCenter, false, true, false);
         if (along != null && along.typeOfHit == MovingObjectType.BLOCK) {
