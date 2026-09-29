@@ -121,6 +121,7 @@ public class ModernClickGui extends GuiScreen {
                 Myau.moduleManager.getModule(RenderFixes.class),
                 Myau.moduleManager.getModule(FreeLook.class),
                 Myau.moduleManager.getModule(ItemPhysics.class),
+				Myau.moduleManager.getModule(PotionHUD.class),
                 Myau.moduleManager.getModule(ClickGUIModule.class)
         );
 

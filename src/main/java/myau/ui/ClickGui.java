@@ -117,6 +117,7 @@ public class ClickGui extends GuiScreen {
         renderModules.add(Myau.moduleManager.getModule(ItemPhysics.class));
         renderModules.add(Myau.moduleManager.getModule(Capes.class));
         renderModules.add(Myau.moduleManager.getModule(Animations.class));
+		renderModules.add(Myau.moduleManager.getModule(PotionHUD.class));
 
         List<Module> playerModules = new ArrayList<>();
         playerModules.add(Myau.moduleManager.getModule(AutoHeal.class));

@@ -96,6 +96,7 @@ public class Myau {
         moduleManager.modules.put(FPScounter.class, new FPScounter());
         moduleManager.modules.put(Chams.class, new Chams());
         moduleManager.modules.put(WaterMark.class, new WaterMark());
+		moduleManager.modules.put(PotionHUD.class, new PotionHUD());
         moduleManager.modules.put(ChestESP.class, new ChestESP());
         moduleManager.modules.put(ClickGUIModule.class, new ClickGUIModule());
         moduleManager.modules.put(ChestStealer.class, new ChestStealer());
