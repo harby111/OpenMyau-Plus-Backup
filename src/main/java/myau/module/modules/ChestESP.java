@@ -24,13 +24,26 @@ import java.util.stream.Collectors;
 
 public class ChestESP extends Module {
     private static final Minecraft mc = Minecraft.getMinecraft();
+    private static final float OPEN_LID_THRESHOLD = 0.01F;
+
     public final ColorProperty chest = new ColorProperty("chest", new Color(255, 170, 0).getRGB());
     public final ColorProperty trappedChest = new ColorProperty("trapped-chest", new Color(255, 43, 0).getRGB());
     public final ColorProperty enderChest = new ColorProperty("ender-chest", new Color(26, 17, 0).getRGB());
     public final BooleanProperty tracers = new BooleanProperty("tracers", false);
+    public final BooleanProperty hideOpened = new BooleanProperty("hide-opened", false);
 
     public ChestESP() {
         super("ChestESP", false);
+    }
+
+    private boolean isChestLidOpen(TileEntity tile) {
+        if (tile instanceof TileEntityChest) {
+            return ((TileEntityChest) tile).lidAngle > OPEN_LID_THRESHOLD;
+        }
+        if (tile instanceof TileEntityEnderChest) {
+            return ((TileEntityEnderChest) tile).lidAngle > OPEN_LID_THRESHOLD;
+        }
+        return false;
     }
 
     @EventTarget
@@ -38,6 +51,10 @@ public class ChestESP extends Module {
         if (this.isEnabled()) {
             RenderUtil.enableRenderState();
             for (TileEntity chest : mc.theWorld.loadedTileEntityList.stream().filter(tileEntity -> tileEntity instanceof TileEntityChest || tileEntity instanceof TileEntityEnderChest).collect(Collectors.toList())) {
+                if (this.hideOpened.getValue() && this.isChestLidOpen(chest)) {
+                    continue;
+                }
+
                 Block block = mc.theWorld.getBlockState(chest.getPos()).getBlock();
                 double minX, minZ, maxX, maxZ;
                 Color color;
