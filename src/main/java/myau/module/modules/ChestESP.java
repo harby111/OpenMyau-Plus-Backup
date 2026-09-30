@@ -36,7 +36,7 @@ public class ChestESP extends Module {
     public final ColorProperty chest = new ColorProperty("chest", new Color(255, 170, 0).getRGB());
     public final ColorProperty trappedChest = new ColorProperty("trapped-chest", new Color(255, 43, 0).getRGB());
     public final ColorProperty enderChest = new ColorProperty("ender-chest", new Color(26, 17, 0).getRGB());
-    public final ColorProperty brokenColor = new ColorProperty("broken-color", new Color(255, 0, 0).getRGB());
+    public final ColorProperty brokenColor = new ColorProperty("broken-color", new Color(255, 0, 0).getRGB()); 
     public final BooleanProperty tracers = new BooleanProperty("tracers", false);
     public final BooleanProperty hideOpened = new BooleanProperty("hide-opened", false);
     public final BooleanProperty rememberBroken = new BooleanProperty("remember-broken", false);
@@ -233,8 +233,6 @@ public class ChestESP extends Module {
         if (this.scanTicksRemaining > 0) {
             this.scanAndRememberChests();
             this.scanTicksRemaining--;
-        } else {
-            this.scanAndRememberChests();
         }
     }
 
@@ -256,8 +254,7 @@ public class ChestESP extends Module {
                 continue;
             }
 
-            if (this.isNormalOrTrappedChest(tile) && this.rememberBroken.getValue()) {
-                this.knownChestPositions.add(tile.getPos());
+            if (this.isNormalOrTrappedChest(tile)) {
                 liveChestPos.add(tile.getPos());
             }
 
