@@ -23,6 +23,16 @@ public class Capes extends Module {
 
     public final ModeProperty capeMode = new ModeProperty("Cape", 0, CAPES_NAME);
 
+    public final BooleanProperty friends = new BooleanProperty("Friends", false);
+    public final ModeProperty friendCape = new ModeProperty("Friend-Cape", 0, CAPES_NAME, this.friends::getValue);
+    public final BooleanProperty applyFriends = new BooleanProperty("Apply", false, this.friends::getValue);
+
+    public final BooleanProperty allPlayer = new BooleanProperty("All player", false);
+    public final BooleanProperty btnLoadCapes = new BooleanProperty("Load capes", false);
+    public final BooleanProperty btnOpenFolder = new BooleanProperty("Open folder", false);
+
+    private static File directory;
+
     private static List<String> getBuiltinCapes() {
         List<String> capes = new ArrayList<>();
         try {
@@ -58,12 +68,6 @@ public class Capes extends Module {
         }
         return capes;
     }
-
-    public final BooleanProperty allPlayer = new BooleanProperty("All player", false);
-    public final BooleanProperty btnLoadCapes = new BooleanProperty("Load capes", false);
-    public final BooleanProperty btnOpenFolder = new BooleanProperty("Open folder", false);
-
-    private static File directory;
 
     public Capes() {
         super("Capes", false);
@@ -155,6 +159,7 @@ public class Capes extends Module {
         LOADED_CAPES.addAll(capeLocations);
         CAPES_NAME = capeNames.toArray(new String[0]);
         capeMode.setModes(CAPES_NAME);
+        friendCape.setModes(CAPES_NAME);
         ChatUtil.display("&aLoaded &r" + CAPES_NAME.length + "&a capes.");
     }
 
@@ -182,5 +187,48 @@ public class Capes extends Module {
             return LOADED_CAPES.get(index);
         }
         return null;
+    }
+
+    public ResourceLocation getFriendCape() {
+        int index = friendCape.getValue();
+        if (index >= 0 && index < LOADED_CAPES.size()) {
+            return LOADED_CAPES.get(index);
+        }
+        return null;
+    }
+
+    public ResourceLocation resolveCapeFor(net.minecraft.entity.Entity entity) {
+        if (entity == null) {
+            return null;
+        }
+
+        boolean isSelf = entity instanceof net.minecraft.client.entity.EntityPlayerSP;
+        boolean isFriend = entity instanceof net.minecraft.entity.player.EntityPlayer
+                && myau.util.TeamUtil.isFriend((net.minecraft.entity.player.EntityPlayer) entity);
+
+        if (isFriend && this.friends.getValue() && this.applyFriends.getValue()) {
+            return this.getFriendCape();
+        }
+        if (isSelf) {
+            return this.getCape();
+        }
+        if (this.allPlayer.getValue()) {
+            return this.getCape();
+        }
+        return null;
+    }
+
+    public boolean shouldForceCapeVisible(net.minecraft.entity.player.EntityPlayer player) {
+        if (player == null || this.getCape() == null && this.getFriendCape() == null) {
+            return false;
+        }
+        if (player instanceof net.minecraft.client.entity.EntityPlayerSP) {
+            return this.getCape() != null;
+        }
+        if (this.friends.getValue() && this.applyFriends.getValue()
+                && myau.util.TeamUtil.isFriend(player) && this.getFriendCape() != null) {
+            return true;
+        }
+        return this.allPlayer.getValue() && this.getCape() != null;
     }
 }

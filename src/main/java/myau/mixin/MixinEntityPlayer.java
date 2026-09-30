@@ -26,12 +26,12 @@ public abstract class MixinEntityPlayer extends MixinEntityLivingBase {
         }
 
         Capes capes = (Capes) Myau.moduleManager.modules.get(Capes.class);
-        if (capes == null || !capes.isEnabled() || capes.getCape() == null) {
+        if (capes == null || !capes.isEnabled()) {
             return;
         }
 
         EntityPlayer player = (EntityPlayer) (Object) this;
-        if (capes.allPlayer.getValue() || player instanceof EntityPlayerSP) {
+        if (capes.shouldForceCapeVisible(player)) {
             callbackInfo.setReturnValue(true);
         }
     }

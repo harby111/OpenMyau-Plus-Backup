@@ -31,11 +31,7 @@ public abstract class MixinAbstractClientPlayer extends MixinEntityPlayer {
         }
 
         Entity entity = (Entity) (Object) this;
-        if (!capes.allPlayer.getValue() && !(entity instanceof EntityPlayerSP)) {
-            return;
-        }
-
-        ResourceLocation cape = capes.getCape();
+        ResourceLocation cape = capes.resolveCapeFor(entity);
         if (cape != null) {
             callbackInfo.setReturnValue(cape);
         }
