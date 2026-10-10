@@ -14,7 +14,6 @@ import myau.util.KeyBindUtil;
 import myau.util.PlayerUtil;
 import myau.util.RotationUtil;
 import myau.property.properties.BooleanProperty;
-import myau.property.properties.FloatProperty;
 import myau.property.properties.IntProperty;
 import net.minecraft.block.Block;
 import net.minecraft.block.BlockChest;
@@ -29,7 +28,7 @@ import net.minecraft.inventory.ContainerChest;
 import net.minecraft.inventory.IInventory;
 import net.minecraft.item.*;
 import net.minecraft.util.BlockPos;
-import net.minecraft.util.EnumFacing;
+import net.minecraft.util.MathHelper;
 import net.minecraft.util.MovingObjectPosition;
 import net.minecraft.util.MovingObjectPosition.MovingObjectType;
 import net.minecraft.util.Vec3;
@@ -42,6 +41,9 @@ import java.util.List;
 
 public class ChestStealer extends Module {
     private static final Minecraft mc = Minecraft.getMinecraft();
+    private static final float BREAK_RANGE = 2.8F;
+    private static final float FOV = 70.0F;
+
     private int clickDelay = 0;
     private int oDelay = 0;
     private boolean inChest = false;
@@ -58,11 +60,8 @@ public class ChestStealer extends Module {
     public final BooleanProperty moreSword = new BooleanProperty("more-sword", false);
 
     public final BooleanProperty breakChests = new BooleanProperty("Break-Chests", false);
-    public final FloatProperty breakRange = new FloatProperty("break-range", 4.5F, 3.0F, 6.0F);
 
     private BlockPos targetChest = null;
-    private int attackHoldTicks = 0;
-    private int attackCooldown = 0;
     private boolean isHoldingAttack = false;
 
     private boolean isValidGameMode() {
@@ -129,25 +128,35 @@ public class ChestStealer extends Module {
         return false;
     }
 
+    private boolean isInFov(BlockPos pos) {
+        double x = pos.getX() + 0.5 - mc.thePlayer.posX;
+        double y = pos.getY() + 0.5 - mc.thePlayer.posY - mc.thePlayer.getEyeHeight();
+        double z = pos.getZ() + 0.5 - mc.thePlayer.posZ;
+        float[] rots = RotationUtil.getRotationsTo(x, y, z, mc.thePlayer.rotationYaw, mc.thePlayer.rotationPitch);
+        float yawDiff = Math.abs(MathHelper.wrapAngleTo180_float(rots[0] - mc.thePlayer.rotationYaw));
+        float pitchDiff = Math.abs(MathHelper.wrapAngleTo180_float(rots[1] - mc.thePlayer.rotationPitch));
+        return yawDiff <= FOV / 2.0F && pitchDiff <= FOV / 2.0F;
+    }
+
     private BlockPos findNearestBreakableChest() {
-        double range = this.breakRange.getValue().doubleValue();
         List<BlockPos> candidates = new ArrayList<>();
 
         int sx = (int) Math.floor(mc.thePlayer.posX);
         int sy = (int) Math.floor(mc.thePlayer.posY + mc.thePlayer.getEyeHeight());
         int sz = (int) Math.floor(mc.thePlayer.posZ);
 
-        int r = (int) Math.ceil(range) + 1;
+        int r = 4;
         for (int x = sx - r; x <= sx + r; x++) {
             for (int y = sy - r; y <= sy + r; y++) {
                 for (int z = sz - r; z <= sz + r; z++) {
                     BlockPos pos = new BlockPos(x, y, z);
                     Block block = mc.theWorld.getBlockState(pos).getBlock();
                     if (!(block instanceof BlockChest)) continue;
-                    if (!PlayerUtil.isBlockWithinReach(pos, mc.thePlayer.posX, mc.thePlayer.posY + mc.thePlayer.getEyeHeight(), mc.thePlayer.posZ, range)) {
+                    if (!PlayerUtil.isBlockWithinReach(pos, mc.thePlayer.posX, mc.thePlayer.posY + mc.thePlayer.getEyeHeight(), mc.thePlayer.posZ, BREAK_RANGE)) {
                         continue;
                     }
                     if (!hasClearLineOfSight(pos)) continue;
+                    if (!isInFov(pos)) continue;
                     candidates.add(pos);
                 }
             }
@@ -166,8 +175,6 @@ public class ChestStealer extends Module {
             KeyBindUtil.setKeyBindState(mc.gameSettings.keyBindAttack.getKeyCode(), false);
             this.isHoldingAttack = false;
         }
-        this.attackHoldTicks = 0;
-        this.attackCooldown = 0;
     }
 
     private void handleBreakChests(UpdateEvent event) {
@@ -192,8 +199,9 @@ public class ChestStealer extends Module {
         if (this.targetChest == null
                 || mc.theWorld.isAirBlock(this.targetChest)
                 || !(mc.theWorld.getBlockState(this.targetChest).getBlock() instanceof BlockChest)
-                || !PlayerUtil.canReach(this.targetChest, this.breakRange.getValue().doubleValue())
-                || !hasClearLineOfSight(this.targetChest)) {
+                || !PlayerUtil.canReach(this.targetChest, BREAK_RANGE)
+                || !hasClearLineOfSight(this.targetChest)
+                || !isInFov(this.targetChest)) {
             this.targetChest = findNearestBreakableChest();
             stopAttackHold();
         }
@@ -208,28 +216,11 @@ public class ChestStealer extends Module {
         double z = this.targetChest.getZ() + 0.5 - mc.thePlayer.posZ;
         float[] rotations = RotationUtil.getRotationsTo(x, y, z, event.getYaw(), event.getPitch());
         event.setRotation(rotations[0], rotations[1], 5);
-        event.setPervRotation(rotations[0], 5); 
-
-        if (this.attackCooldown > 0) {
-            this.attackCooldown--;
-            if (this.isHoldingAttack) {
-                KeyBindUtil.setKeyBindState(mc.gameSettings.keyBindAttack.getKeyCode(), false);
-                this.isHoldingAttack = false;
-            }
-            return;
-        }
+        event.setPervRotation(rotations[0], 5);
 
         if (!this.isHoldingAttack) {
             KeyBindUtil.setKeyBindState(mc.gameSettings.keyBindAttack.getKeyCode(), true);
             this.isHoldingAttack = true;
-            this.attackHoldTicks = RandomUtils.nextInt(3, 8);
-        } else {
-            this.attackHoldTicks--;
-            if (this.attackHoldTicks <= 0) {
-                KeyBindUtil.setKeyBindState(mc.gameSettings.keyBindAttack.getKeyCode(), false);
-                this.isHoldingAttack = false;
-                this.attackCooldown = RandomUtils.nextInt(1, 3);
-            }
         }
     }
 
